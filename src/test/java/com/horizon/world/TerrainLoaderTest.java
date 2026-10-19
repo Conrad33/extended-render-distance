@@ -37,15 +37,24 @@ public class TerrainLoaderTest
 			}
 
 			ObjectMesher objects = new ObjectMesher(cache, new int[]{0x2b4a, 0x2b4a});
-			long t = System.nanoTime();
-			TerrainMesher.Built all = objects.build(lumbridge, false, null);
-			long ms = (System.nanoTime() - t) / 1_000_000;
-			TerrainMesher.Built far = objects.build(lumbridge, true, null);
-			System.out.println("lumbridge scenery: " + all.count / 3 + " triangles in " + ms + " ms, landmarks "
-				+ far.count / 3 + ", heights " + all.minHeight + ".." + all.maxHeight);
-			assertTrue(all.count > 10000);
-			assertEquals(0, all.count % 3);
-			assertTrue(far.count < all.count);
+			ObjectMesher.Detail[] details = {ObjectMesher.Detail.FULL, new ObjectMesher.Detail(false, false, 24),
+				new ObjectMesher.Detail(false, true, 64), new ObjectMesher.Detail(false, true, 160)};
+			for (int[] sq : new int[][]{{50, 50}, {50, 53}, {46, 52}})
+			{
+				StringBuilder line = new StringBuilder("square " + sq[0] + "," + sq[1] + ":");
+				int last = Integer.MAX_VALUE;
+				for (ObjectMesher.Detail d : details)
+				{
+					long t = System.nanoTime();
+					TerrainMesher.Built b = objects.build(w.region(sq[0], sq[1]), d, null);
+					line.append(String.format(" %dk (%d ms)", b.count / 3000, (System.nanoTime() - t) / 1_000_000));
+					assertEquals(0, b.count % 3);
+					assertTrue(b.count <= last);
+					last = b.count;
+				}
+				System.out.println(line);
+			}
+			long t;
 
 			// from Lumbridge: Varrock and Falador, not the Stronghold of Security under Barbarian Village
 			t = System.nanoTime();

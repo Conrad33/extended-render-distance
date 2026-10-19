@@ -45,16 +45,4 @@ public interface HorizonConfig extends Config
 	{
 		return 1000;
 	}
-
-	@ConfigItem(
-		keyName = "hideEdgeFog",
-		name = "Hide the GPU plugin's edge fog",
-		description = "The GPU plugin fades the normal view into the sky at its edge; with the far world behind it, that "
-			+ "shows as a ring of sky",
-		position = 4
-	)
-	default boolean hideEdgeFog()
-	{
-		return true;
-	}
 }

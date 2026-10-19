@@ -29,8 +29,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has cleared its
  * framebuffer and drawn the sky, before the scene. It uses the GPU plugin's exact projection and shares its depth
  * buffer, with its depth pushed back a little so the real scene always wins where both draw; inside the area the GPU
- * plugin draws (the loaded scene, out to its draw distance, less a margin) it draws nothing at all. Every bit of GL
- * state it touches is put back. Client thread, inside the GPU plugin's GL context.
+ * plugin draws (the loaded scene, out to its draw distance, less a margin) it draws nothing at all. The GPU plugin's
+ * fog at the edge of its view is turned off (it would show as a ring of sky). Every bit of GL state it touches is put
+ * back. Client thread, inside the GPU plugin's GL context.
  */
 @Slf4j
 @Singleton
@@ -40,6 +41,15 @@ public class FarRenderer
 	/** Ground detail: a grid every 1, 2, 4, 8 or 16 tiles out to these distances (tiles), then the coarsest. */
 	private static final int[] TERRAIN_STEPS = {1, 2, 4, 8, 16};
 	private static final double[] TERRAIN_RANGES = {40, 110, 260, 600};
+	/** Scenery detail by level: exact, then no decorations and snapped to 24 units, then buildings and tall things
+	 * snapped to 64 and 160 units. */
+	private static final ObjectMesher.Detail[] SCENERY_DETAIL = {ObjectMesher.Detail.FULL,
+		new ObjectMesher.Detail(false, false, 24), new ObjectMesher.Detail(false, true, 64),
+		new ObjectMesher.Detail(false, true, 160)};
+	/** Tiles out to which scenery is exact. */
+	private static final int FULL_DETAIL = 128;
+	/** Tiles out to which buildings are only a little simplified. */
+	private static final int BUILDINGS_FINE = 600;
 	/** Tiles inside the GPU plugin's edge where the far world stops (both draw in this band; the real scene wins). */
 	private static final int EDGE_OVERLAP = 10;
 	/** The GPU plugin's largest draw distance. */
@@ -159,8 +169,10 @@ public class FarRenderer
 
 			int baseX = wv.getBaseX(), baseY = wv.getBaseY();
 			double view = config.viewDistance();
-			terrain.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view);
-			scenery.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view);
+			// the hole in world tiles: squares wholly inside it aren't drawn at all
+			double[] hole = {baseX + (minX + m) / t, baseY + (minZ + m) / t, baseX + (maxX - m) / t, baseY + (maxZ - m) / t};
+			terrain.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
+			scenery.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
 		}
 		finally
 		{
@@ -175,7 +187,7 @@ public class FarRenderer
 			glDepthMask(depthMask);
 		}
 
-		if (config.hideEdgeFog() && prevProgram != 0)
+		if (prevProgram != 0)
 		{
 			// the GPU plugin's program is bound again and its uniforms are set for this frame: turn its edge fog off
 			if (prevProgram != fogProgram)
@@ -239,9 +251,12 @@ public class FarRenderer
 		if (scenery != null)
 			scenery.free();
 		ObjectMesher objects = new ObjectMesher(w, texColours);
-		scenery = new RegionLayer("scenery", new double[]{Math.max(1, sc), Math.max(2, lm)}, false, 3, 9, 4);
+		// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
+		// simplified more and more out to the building distance
+		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
+		scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
 		scenery.setFilter(r -> rc == null || rc.touches(r));
-		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, level == 1, rc));
+		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, SCENERY_DETAIL[level], rc));
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;

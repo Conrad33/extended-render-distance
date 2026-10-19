@@ -109,9 +109,11 @@ final class RegionLayer
 	/**
 	 * Draws the layer. {@code proj} is the camera-relative projection; the camera is at scene position (cx, cy,
 	 * cz) in a scene whose south-west tile is world tile (baseX, baseY). {@code uniOffset} is the program's offset
-	 * uniform. Squares further than {@code maxDistance} tiles aren't drawn.
+	 * uniform. Squares further than {@code maxDistance} tiles, or wholly inside the hole (world tiles {@code hole}:
+	 * min x, min y, max x, max y; the area drawn by the game itself), aren't drawn.
 	 */
-	void draw(float[] proj, float cx, float cy, float cz, int baseX, int baseY, int uniOffset, double maxDistance)
+	void draw(float[] proj, float cx, float cy, float cz, int baseX, int baseY, int uniOffset, double maxDistance,
+		double[] hole)
 	{
 		if (world == null || builder == null)
 			return;
@@ -124,6 +126,8 @@ final class RegionLayer
 		{
 			if (!filter.includes(r))
 				continue;
+			boolean hidden = r.baseX() >= hole[0] && r.baseY() >= hole[1] && r.baseX() + 64 <= hole[2]
+				&& r.baseY() + 64 <= hole[3];
 			double dx = Math.max(0, Math.max(r.baseX() - camTileX, camTileX - (r.baseX() + 64)));
 			double dy = Math.max(0, Math.max(r.baseY() - camTileY, camTileY - (r.baseY() + 64)));
 			double dist = Math.sqrt(dx * dx + dy * dy);
@@ -158,7 +162,7 @@ final class RegionLayer
 				if (dist > ranges[l] * 1.25)
 					freeMesh(slot, l);
 			}
-			if (any == null || !visible || any.count == 0)
+			if (any == null || !visible || hidden || any.count == 0)
 				continue;
 			glUniform3f(uniOffset, ox, -cy, oz);
 			glBindVertexArray(any.vao);
@@ -194,9 +198,11 @@ final class RegionLayer
 	}
 
 	/** False when the square's box is wholly outside one side of the view. Heights are camera-relative. */
+	private final int[] out = new int[5];
+
 	private boolean visible(float[] proj, float ox, float minY, float maxY, float oz)
 	{
-		int[] out = new int[5];
+		java.util.Arrays.fill(out, 0);
 		float s = 64 * 128f;
 		for (int c = 0; c < 8; c++)
 		{
