@@ -18,8 +18,8 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * Draws the world beyond the normal view into the GPU plugin's frame, from the game cache: the ground out to the
- * view distance (levels of detail, hazed into the sky), all scenery out to the scenery distance and roofs and tall
- * landmarks out to the landmark distance (each a {@link RegionLayer}).
+ * view distance (levels of detail, hazed into the sky), all scenery out to the scenery distance and buildings and
+ * tall things out to the building distance (each a {@link RegionLayer}).
  * <p>
  * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has cleared its
  * framebuffer and drawn the sky, before the scene. It uses the GPU plugin's exact projection and shares its depth
@@ -203,7 +203,7 @@ public class FarRenderer
 		if (scenery != null)
 			scenery.free();
 		ObjectMesher objects = new ObjectMesher(w, texColours);
-		scenery = new RegionLayer("scenery", new double[]{Math.max(1, sc), Math.max(2, lm)}, false, 2, 4, 2);
+		scenery = new RegionLayer("scenery", new double[]{Math.max(1, sc), Math.max(2, lm)}, false, 3, 9, 4);
 		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, level == 1));
 		builtFor = w;
 		builtScenery = sc;

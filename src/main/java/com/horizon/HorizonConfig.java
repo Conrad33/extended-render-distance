@@ -12,38 +12,38 @@ public interface HorizonConfig extends Config
 
 	@Range(min = 200, max = 4000)
 	@ConfigItem(
-		keyName = "viewDistance",
+		keyName = "viewRange",
 		name = "View distance",
 		description = "How far the world is drawn, in tiles. The haze thickens towards it",
 		position = 1
 	)
 	default int viewDistance()
 	{
-		return 1200;
+		return 1500;
 	}
 
-	@Range(min = 0, max = 400)
+	@Range(min = 0, max = 800)
 	@ConfigItem(
-		keyName = "sceneryDistance",
+		keyName = "sceneryRange",
 		name = "Scenery distance",
 		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles",
 		position = 2
 	)
 	default int sceneryDistance()
 	{
-		return 160;
+		return 320;
 	}
 
-	@Range(min = 0, max = 1500)
+	@Range(min = 0, max = 3000)
 	@ConfigItem(
-		keyName = "landmarkDistance",
-		name = "Landmark distance",
-		description = "How far roofs and tall things (trees, towers, castle walls) are drawn, in tiles",
+		keyName = "landmarkRange",
+		name = "Building distance",
+		description = "How far buildings (walls and roofs) and tall things (trees, towers) are drawn, in tiles",
 		position = 3
 	)
 	default int landmarkDistance()
 	{
-		return 450;
+		return 1000;
 	}
 
 	@ConfigItem(

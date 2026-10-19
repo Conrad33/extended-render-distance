@@ -9,13 +9,14 @@ import net.runelite.cache.definitions.ObjectDefinition;
  * them, and ground-hugging objects (fences, rugs) bent to follow the ground vertex by vertex. Vertices are relative
  * to the square's south-west corner, as for the terrain. Any thread.
  * <p>
- * The {@code landmarks} mesh is for far away: only roofs and objects standing at least {@link #LANDMARK_HEIGHT}
- * high (trees, towers, castle walls).
+ * The {@code landmarks} mesh is for far away: buildings (walls and roofs) and objects standing at least
+ * {@link #LANDMARK_HEIGHT} high (trees, towers, windmills), without the small things (decorations on walls and the
+ * ground, low clutter).
  */
 public final class ObjectMesher
 {
-	/** Local units (128 to a tile) an object must stand to be seen from afar. */
-	static final int LANDMARK_HEIGHT = 380;
+	/** Local units (128 to a tile) a free-standing object must stand to be seen from afar. */
+	static final int LANDMARK_HEIGHT = 250;
 
 	private final WorldCache cache;
 	private final ObjectModels models;
@@ -39,6 +40,9 @@ public final class ObjectMesher
 			int type = r.locType(i), rot = r.locOrientation(i), plane = r.locPlane(i);
 			int x = r.locX(i), y = r.locY(i);
 			boolean roof = type >= 12 && type <= 21;
+			boolean wall = type <= 3 || type == 9;
+			if (landmarks && (type >= 4 && type <= 8 || type == 22))
+				continue;
 
 			// the model type(s) and orientation(s) the client asks for, and how the object is placed
 			int[][] parts;
@@ -85,7 +89,7 @@ public final class ObjectMesher
 					m = models.get(d, 10, part[1]);
 				if (m == null)
 					continue;
-				if (landmarks && !roof && m.top < LANDMARK_HEIGHT)
+				if (landmarks && !roof && !wall && m.top < LANDMARK_HEIGHT)
 					continue;
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
 				float[] c = m.corners;
