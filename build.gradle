@@ -48,9 +48,9 @@ tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = pluginMainClass
 
-	// assertions on (RuneLite requires them to load a dev plugin), except in the GPU plugin: there, another plugin's
-	// model that trips its depth-sort assertion kills the client thread, which normal RuneLite (run without -ea)
-	// never does
+	// assertions on (RuneLite requires them to load a dev plugin), except in the GPU plugin: there,
+	// another plugin's model that trips its depth-sort assertion kills the client thread, which
+	// normal RuneLite (run without -ea) never does
 	jvmArgs "-ea", "-da:net.runelite.client.plugins.gpu..."
 	args "--developer-mode", "--debug"
 }
