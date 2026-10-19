@@ -124,10 +124,23 @@ public class CallbacksWrapper
 			String name = method.getName();
 			if ("preSceneDraw".equals(name))
 				afterPreSceneDraw(method, args);
+			else if ("drawZoneOpaque".equals(name))
+				zoneDrawn(args);
 			else if ("draw".equals(name) && args != null && args.length == 1)
+			{
 				drewThisFrame = false;
+				far.endFrame();
+			}
 			return result;
 		};
+	}
+
+	/** (projection, scene, zone x, zone z): the game drew a zone of the top-level scene. */
+	private void zoneDrawn(Object[] args)
+	{
+		Scene scene = (Scene) args[1];
+		if (scene != null && scene.getWorldViewId() == WorldView.TOPLEVEL)
+			far.zoneDrawn((int) args[2], (int) args[3]);
 	}
 
 	private void afterPreSceneDraw(Method method, Object[] args)

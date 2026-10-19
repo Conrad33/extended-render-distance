@@ -105,6 +105,7 @@ public final class ObjectMesher
 				}
 			}
 			int wx = r.baseX() + x, wy = r.baseY() + y;
+			int anchor = x << 6 | y;
 			float cx = (x + sx / 2f) * 128, cz = (y + sy / 2f) * 128;
 			float cy = (world.height(wx, wy, plane, r) + world.height(wx + sx, wy, plane, r)
 				+ world.height(wx, wy + sy, plane, r) + world.height(wx + sx, wy + sy, plane, r)) / 4f;
@@ -152,7 +153,7 @@ public final class ObjectMesher
 						continue;
 					for (int k = 0; k < 3; k++)
 					{
-						sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], m.colours[f * 3 + k]);
+						sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], stamp(m.colours[f * 3 + k], anchor));
 						min = Math.min(min, (int) tri[k * 3 + 1]);
 						max = Math.max(max, (int) tri[k * 3 + 1]);
 					}
@@ -217,7 +218,7 @@ public final class ObjectMesher
 				x[k] = x0 + (float) (us[k] * 128);
 				z[k] = z0 + (float) (vs[k] * 128);
 				y[k] = (float) bilinear(ch, us[k], vs[k]);
-				c[k] = TerrainMesher.shade(colour, bilinear(cl, us[k], vs[k]));
+				c[k] = stamp(TerrainMesher.shade(colour, bilinear(cl, us[k], vs[k])), r.floorX(i) << 6 | r.floorY(i));
 			}
 			sink.quad(x, y, z, c);
 			// and the other side
@@ -237,6 +238,15 @@ public final class ObjectMesher
 	{
 		double south = c[0] + (c[1] - c[0]) * u, north = c[3] + (c[2] - c[3]) * u;
 		return south + (north - south) * v;
+	}
+
+	/**
+	 * A vertex colour as drawn: the packed HSL, the face's draw priority (to 7) and the tile within the square of
+	 * the object (or floor) it belongs to, so the renderer can leave out whole objects the game draws itself.
+	 */
+	static int stamp(int colour, int anchor)
+	{
+		return colour & 0xffff | Math.min(7, colour >> 16 & 15) << 16 | (anchor + 1) << 19;
 	}
 
 	/** Whether two of a snapped triangle's corners landed on the same point. */

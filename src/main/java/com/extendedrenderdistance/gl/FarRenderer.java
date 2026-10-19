@@ -15,7 +15,6 @@ import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.client.config.ConfigManager;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
 import static org.lwjgl.opengl.GL33C.*;
@@ -28,8 +27,9 @@ import static org.lwjgl.opengl.GL33C.*;
  * <p>
  * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has cleared its
  * framebuffer and drawn the sky, before the scene. It uses the GPU plugin's exact projection and shares its depth
- * buffer, with its depth pushed back a little so the real scene always wins where both draw; inside the area the GPU
- * plugin draws (the loaded scene, out to its draw distance, less a margin) it draws nothing at all. The GPU plugin's
+ * buffer, with its depth pushed back a little so the real scene always wins where both draw; it leaves out whatever
+ * the game draws itself (see {@link DrawnZones}): every object and floor in a zone the GPU plugin drew, and the
+ * ground there but for a zone's overlap at the edge, so nothing is ever drawn twice. The GPU plugin's
  * fog at the edge of its view is turned off (it would show as a ring of sky). Every bit of GL state it touches is put
  * back. Client thread, inside the GPU plugin's GL context.
  */
@@ -50,13 +50,11 @@ public class FarRenderer
 	private static final int FULL_DETAIL = 128;
 	/** Tiles out to which buildings are only a little simplified. */
 	private static final int BUILDINGS_FINE = 600;
-	/** Tiles inside the GPU plugin's edge where the far world stops (both draw in this band; the real scene wins). */
-	private static final int EDGE_OVERLAP = 10;
-	/** The GPU plugin's largest draw distance. */
-	private static final int GPU_MAX_DISTANCE = 184;
+	/** The texture unit the drawn-zone mask is bound to (one the GPU plugin doesn't use). */
+	private static final int MASK_UNIT = 7;
 
 	private final Client client;
-	private final ConfigManager configManager;
+	private final DrawnZones zones = new DrawnZones();
 	private final ExtendedRenderDistanceConfig config;
 
 	private volatile WorldCache world;
@@ -69,16 +67,16 @@ public class FarRenderer
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
 	private GLCapabilities caps;
-	private int program, uniProj, uniOffset, uniBrightness, uniFogColour, uniFogDistance, uniHole, uniDepthScale;
+	private int program, uniProj, uniOffset, uniBrightness, uniFogColour, uniFogDistance, uniDepthScale;
+	private int uniZones, uniZonesOrigin, maskTexture;
 	private int[] texColours;
 	private int fogProgram = -1, uniUseFog = -1;
 	private boolean failed;
 
 	@Inject
-	FarRenderer(Client client, ConfigManager configManager, ExtendedRenderDistanceConfig config)
+	FarRenderer(Client client, ExtendedRenderDistanceConfig config)
 	{
 		this.client = client;
-		this.configManager = configManager;
 		this.config = config;
 	}
 
@@ -132,14 +130,7 @@ public class FarRenderer
 		Mat4.mul(proj, Mat4.rotateX(pitch));
 		Mat4.mul(proj, Mat4.rotateY(yaw));
 
-		// what the GPU plugin draws: the loaded scene, out to its draw distance from the camera
-		int expanded = client.getExpandedMapLoading() * 8;
-		Integer gpuDistance = configManager.getConfiguration("gpu", "drawDistance", Integer.class);
-		int dd = Math.max(0, Math.min(GPU_MAX_DISTANCE, gpuDistance == null ? 25 : gpuDistance));
-		float t = 128f;
-		float minX = Math.max(-expanded * t, camX - dd * t), maxX = Math.min((104 + expanded) * t, camX + dd * t);
-		float minZ = Math.max(-expanded * t, camZ - dd * t), maxZ = Math.min((104 + expanded) * t, camZ + dd * t);
-		float m = EDGE_OVERLAP * t;
+		int baseX = wv.getBaseX(), baseY = wv.getBaseY();
 
 		// --- save the GPU plugin's state
 		int prevProgram = glGetInteger(GL_CURRENT_PROGRAM);
@@ -148,6 +139,10 @@ public class FarRenderer
 		boolean blend = glIsEnabled(GL_BLEND), cull = glIsEnabled(GL_CULL_FACE), depth = glIsEnabled(GL_DEPTH_TEST);
 		int depthFunc = glGetInteger(GL_DEPTH_FUNC);
 		boolean depthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
+		int prevUnit = glGetInteger(GL_ACTIVE_TEXTURE);
+		glActiveTexture(GL_TEXTURE0 + MASK_UNIT);
+		int prevTexture = glGetInteger(GL_TEXTURE_BINDING_2D);
+		int prevUnpack = glGetInteger(GL_PIXEL_UNPACK_BUFFER_BINDING);
 
 		try
 		{
@@ -163,14 +158,21 @@ public class FarRenderer
 			int sky = client.getSkyboxColor();
 			glUniform3f(uniFogColour, (sky >> 16 & 0xff) / 255f, (sky >> 8 & 0xff) / 255f, (sky & 0xff) / 255f);
 			glUniform1f(uniFogDistance, config.viewDistance() * 128f * 0.55f);
-			// the hole, camera-relative
-			glUniform4f(uniHole, minX + m - camX, minZ + m - camZ, maxX - m - camX, maxZ - m - camZ);
+			// what the game drew itself last frame, zone by zone; zone (0, 0) starts 5 zones before the scene's corner
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+			glBindTexture(GL_TEXTURE_2D, maskTexture);
+			java.nio.ByteBuffer mask = zones.mask();
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, DrawnZones.MASK, DrawnZones.MASK, GL_RED, GL_UNSIGNED_BYTE, mask);
+			java.lang.ref.Reference.reachabilityFence(mask);
+			glUniform1i(uniZones, MASK_UNIT);
+			float zone0 = -DrawnZones.OFFSET * 1024f;
+			glUniform2f(uniZonesOrigin, zone0 - camX, zone0 - camZ);
 			glUniform1f(uniDepthScale, 0.996f);
 
-			int baseX = wv.getBaseX(), baseY = wv.getBaseY();
 			double view = config.viewDistance();
-			// the hole in world tiles: squares wholly inside it aren't drawn at all
-			double[] hole = {baseX + (minX + m) / t, baseY + (minZ + m) / t, baseX + (maxX - m) / t, baseY + (maxZ - m) / t};
+			// squares the game draws wholly aren't drawn at all
+			java.util.function.Predicate<com.extendedrenderdistance.world.WorldTerrain.Region> hole = r -> covered(r, baseX, baseY);
 			terrain.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
 			// models' back faces are hidden, as the game does: a wall's two sides never fight over the same pixels
 			// (simplifying far away can bring them together)
@@ -188,6 +190,9 @@ public class FarRenderer
 			setEnabled(GL_DEPTH_TEST, depth);
 			glDepthFunc(depthFunc);
 			glDepthMask(depthMask);
+			glBindTexture(GL_TEXTURE_2D, prevTexture);
+			glActiveTexture(prevUnit);
+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, prevUnpack);
 		}
 
 		if (prevProgram != 0)
@@ -201,6 +206,34 @@ public class FarRenderer
 			if (uniUseFog >= 0)
 				glUniform1i(uniUseFog, 0);
 		}
+	}
+
+	/** Whether every zone of a map square is drawn by the game itself. */
+	private boolean covered(com.extendedrenderdistance.world.WorldTerrain.Region r, int baseX, int baseY)
+	{
+		for (int i = 0; i < 64; i += 8)
+		{
+			for (int j = 0; j < 64; j += 8)
+			{
+				if (!zones.isDrawnAt(r.baseX() + i, r.baseY() + j, baseX, baseY))
+					return false;
+			}
+		}
+		return true;
+	}
+
+	/** A zone the game drew this frame. */
+	public void zoneDrawn(int zx, int zz)
+	{
+		zones.drawn(zx, zz);
+	}
+
+	/** The end of a frame. */
+	public void endFrame()
+	{
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv != null)
+			zones.endFrame(wv.getBaseX(), wv.getBaseY());
 	}
 
 	private static void setEnabled(int cap, boolean on)
@@ -274,7 +307,18 @@ public class FarRenderer
 		uniBrightness = glGetUniformLocation(program, "brightness");
 		uniFogColour = glGetUniformLocation(program, "fogColour");
 		uniFogDistance = glGetUniformLocation(program, "fogDistance");
-		uniHole = glGetUniformLocation(program, "hole");
+		uniZones = glGetUniformLocation(program, "drawnZones");
+		uniZonesOrigin = glGetUniformLocation(program, "zonesOrigin");
+		maskTexture = glGenTextures();
+		int unit = glGetInteger(GL_ACTIVE_TEXTURE);
+		glActiveTexture(GL_TEXTURE0 + MASK_UNIT);
+		int prev = glGetInteger(GL_TEXTURE_BINDING_2D);
+		glBindTexture(GL_TEXTURE_2D, maskTexture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, DrawnZones.MASK, DrawnZones.MASK, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glBindTexture(GL_TEXTURE_2D, prev);
+		glActiveTexture(unit);
 		uniDepthScale = glGetUniformLocation(program, "depthScale");
 	}
 
@@ -302,11 +346,14 @@ public class FarRenderer
 				scenery.free();
 			if (program != 0)
 				glDeleteProgram(program);
+			if (maskTexture != 0)
+				glDeleteTextures(maskTexture);
 		}
 		terrain = scenery = null;
 		builtFor = null;
 		caps = null;
 		program = 0;
+		maskTexture = 0;
 		fogProgram = -1;
 	}
 }
