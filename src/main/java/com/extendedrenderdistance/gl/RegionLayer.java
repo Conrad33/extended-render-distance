@@ -85,7 +85,9 @@ final class RegionLayer
 	/** Level i is used out to ranges[i] tiles. */
 	private double[] ranges;
 	/** Whether the last level is used beyond the last range (else nothing is drawn there). */
-	private final boolean everywhere;
+	private boolean everywhere;
+	/** Levels a square can hold, whatever the layer's levels are switched to. */
+	private static final int MAX_LEVELS = 8;
 	private final int maxInFlight, uploadsPerFrame;
 	private final ExecutorService workers;
 	private final ConcurrentLinkedQueue<Object[]> built = new ConcurrentLinkedQueue<>();
@@ -124,6 +126,17 @@ final class RegionLayer
 	void setRanges(double[] ranges)
 	{
 		this.ranges = ranges;
+	}
+
+	/**
+	 * Switches to other levels (and how many), built by {@code builder}: every square is built again, drawing what
+	 * it has meanwhile.
+	 */
+	void setLevels(double[] ranges, boolean everywhere, Builder builder)
+	{
+		this.ranges = ranges;
+		this.everywhere = everywhere;
+		rebuild(r -> true, builder);
 	}
 
 	/** Uses this world and builder (null for none); everything built before is freed. */
@@ -215,7 +228,7 @@ final class RegionLayer
 			}
 			if (slot == null)
 			{
-				slot = new Slot(levels());
+				slot = new Slot(MAX_LEVELS);
 				slots.put(r, slot);
 			}
 
@@ -226,10 +239,19 @@ final class RegionLayer
 			boolean visible = any == null || visible(proj, ox, any.minHeight - cy, any.maxHeight - cy, oz);
 			if (visible && slot.wants(level))
 				wanted.add(new Object[]{r, level, dist, false});
-			// finer levels than needed, once well out of their range
-			for (int l = 0; l < level; l++)
+			// once the level wanted is built, the old ones stood in for it go; finer levels than needed go once
+			// well out of their range
+			boolean ready = slot.meshes[level] != null && !slot.stale[level];
+			for (int l = 0; l < slot.meshes.length; l++)
 			{
-				if (dist > ranges[l] * 1.25)
+				if (l == level)
+					continue;
+				if (slot.stale[l])
+				{
+					if (ready)
+						freeMesh(slot, l);
+				}
+				else if (l < level && dist > ranges[l] * 1.25)
 					freeMesh(slot, l);
 			}
 			if (any == null || !visible || skip || any.count == 0)

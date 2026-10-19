@@ -43,6 +43,8 @@ public class FarRenderer
 	/** Ground detail: a grid every 1, 2, 4, 8 or 16 tiles out to these distances (tiles), then the coarsest. */
 	private static final int[] TERRAIN_STEPS = {1, 2, 4, 8, 16};
 	private static final double[] TERRAIN_RANGES = {40, 110, 260, 600};
+	/** Without performance mode: one level, every tile, everywhere. */
+	private static final double[] FULL_RANGE = {Double.MAX_VALUE};
 	/**
 	 * Scenery detail by level: exact, then no decorations snapped to a 24-unit grid, then only buildings and tall
 	 * things snapped to 64 and 160 units; finer for squares holding big structures (one grid per square, so their
@@ -310,9 +312,11 @@ public class FarRenderer
 		boolean reachRefreshed = rc != was && was != null && refreshedFrom == was;
 		boolean incremental = terrain != null && builtFor != null && (rc == was || reachRefreshed);
 		int[] tex = texColours;
-		RegionLayer.Builder ground = (r, level) -> TerrainMesher.build(w.terrain, r, TERRAIN_STEPS[level], tex, rc);
+		// performance mode: coarser ground further away; without it, every tile everywhere
+		RegionLayer.Builder ground = (r, level) -> TerrainMesher.build(w.terrain, r,
+			simplify ? TERRAIN_STEPS[level] : 1, tex, rc);
+		double[] groundRanges = simplify ? TERRAIN_RANGES : FULL_RANGE;
 		ObjectMesher objects = new ObjectMesher(w, texColours);
-		// unsimplified: the same levels (what's drawn where), but nothing snapped
 		ObjectMesher.Detail[] detail = simplify ? SCENERY_DETAIL : unsimplified();
 		RegionLayer.Builder things = (r, level) -> objects.build(r, detail[level], rc);
 
@@ -320,16 +324,21 @@ public class FarRenderer
 		{
 			if (terrain != null)
 				terrain.free();
-			terrain = new RegionLayer("terrain", TERRAIN_RANGES, true, 1, 24, 12);
+			terrain = new RegionLayer("terrain", groundRanges, simplify, 1, 24, 12);
 			terrain.setFilter(r -> rc == null || rc.touches(r));
 			terrain.setWorld(w.terrain, ground);
 		}
 		else
+		{
 			update(terrain, w, rc, was, ground);
+			if (simplify != builtSimplify)
+				terrain.setLevels(groundRanges, simplify, ground);
+		}
 
-		// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
-		// simplified more and more out to the building distance
-		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
+		// everything exactly up close, then (performance mode) simplified out to the scenery distance, then buildings
+		// and tall things (simplified more and more in performance mode) out to the building distance
+		double[] ranges = {simplify ? Math.min(FULL_DETAIL, sc) : sc, sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)),
+			lm};
 		if (!incremental)
 		{
 			if (scenery != null)
@@ -342,7 +351,7 @@ public class FarRenderer
 		{
 			update(scenery, w, rc, was, things);
 			// the distances only pick which level is drawn where: what's built stays right
-			if (distances)
+			if (distances || simplify != builtSimplify)
 				scenery.setRanges(ranges);
 			if (simplify != builtSimplify)
 				scenery.rebuild(r -> true, things);
@@ -366,11 +375,12 @@ public class FarRenderer
 		}
 	}
 
+	/** Without performance mode: everything out to the scenery distance, then the landmarks; nothing snapped. */
 	private static ObjectMesher.Detail[] unsimplified()
 	{
 		ObjectMesher.Detail[] out = new ObjectMesher.Detail[SCENERY_DETAIL.length];
 		for (int i = 0; i < out.length; i++)
-			out[i] = new ObjectMesher.Detail(SCENERY_DETAIL[i].decorations, SCENERY_DETAIL[i].landmarksOnly, 0);
+			out[i] = SCENERY_DETAIL[i].landmarksOnly ? new ObjectMesher.Detail(false, true, 0) : ObjectMesher.Detail.FULL;
 		return out;
 	}
 

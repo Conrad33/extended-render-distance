@@ -80,13 +80,24 @@ public final class TerrainMesher
 		}
 
 		VertexSink sink = new VertexSink(n * n * 6 + 4 * n * 6);
-		// the colour standing for each grid quad (VOID where nothing is drawn), for the coarse levels and skirts
-		int[] quadColour = new int[n * n];
+		// the colour standing for each grid quad (VOID where nothing is drawn), for the coarse levels and skirts: its
+		// south-west tile's, or where that has no ground (under a wall), the first of its tiles that has; nothing where
+		// most of its tiles have none
+		int[] quadCode = new int[n * n], quadColour = new int[n * n];
 		for (int i = 0; i < n; i++)
 		{
 			for (int j = 0; j < n; j++)
-				quadColour[i * n + j] = reach != null && !reach.has(bx + i * step, by + j * step) ? WorldTerrain.VOID
-					: resolve(world.colour(bx + i * step, by + j * step), textureColours);
+			{
+				int code = WorldTerrain.VOID;
+				if (reach == null || reach.has(bx + i * step, by + j * step))
+				{
+					code = world.colour(bx + i * step, by + j * step);
+					if (code == WorldTerrain.VOID && step > 1)
+						code = groundIn(world, bx + i * step, by + j * step, step);
+				}
+				quadCode[i * n + j] = code;
+				quadColour[i * n + j] = resolve(code, textureColours);
+			}
 		}
 
 		if (step == 1)
@@ -101,7 +112,7 @@ public final class TerrainMesher
 			}
 		}
 		else
-			coarse(world, sink, bx, by, n, step, h, lit, quadColour, textureColours);
+			coarse(world, sink, bx, by, n, step, h, lit, quadCode, quadColour, textureColours);
 
 		float t = step * TILE;
 		float drop = 2 * t;
@@ -117,7 +128,7 @@ public final class TerrainMesher
 
 	/** A coarse grid: each corner coloured by the tile there (or the quad's own colour where that tile is void). */
 	private static void coarse(WorldTerrain world, VertexSink sink, int bx, int by, int n, int step, int[] h, double[] lit,
-		int[] quadColour, int[] textureColours)
+		int[] quadCode, int[] quadColour, int[] textureColours)
 	{
 		int[] vc = new int[(n + 1) * (n + 1)];
 		for (int i = 0; i <= n; i++)
@@ -137,7 +148,7 @@ public final class TerrainMesher
 				int own = quadColour[i * n + j];
 				if (own == WorldTerrain.VOID)
 					continue;
-				int code = world.colour(bx + i * step, by + j * step);
+				int code = quadCode[i * n + j];
 				boolean textured = WorldTerrain.isTextured(code);
 				int[] corner = {i * (n + 1) + j, (i + 1) * (n + 1) + j, (i + 1) * (n + 1) + j + 1, i * (n + 1) + j + 1};
 				for (int k = 0; k < 4; k++)
@@ -295,6 +306,28 @@ public final class TerrainMesher
 	{
 		int l = (int) Math.floor((hsl & 127) * light + 1e-9);
 		return (hsl & ~127) | Math.max(2, Math.min(126, l));
+	}
+
+	/**
+	 * The colour of the first tile with ground in the step x step block from (x0, y0), or VOID when fewer than half
+	 * of them have any.
+	 */
+	private static int groundIn(WorldTerrain world, int x0, int y0, int step)
+	{
+		int first = WorldTerrain.VOID, ground = 0;
+		for (int x = x0; x < x0 + step; x++)
+		{
+			for (int y = y0; y < y0 + step; y++)
+			{
+				int c = world.colour(x, y);
+				if (c == WorldTerrain.VOID)
+					continue;
+				ground++;
+				if (first == WorldTerrain.VOID)
+					first = c;
+			}
+		}
+		return ground * 2 >= step * step ? first : WorldTerrain.VOID;
 	}
 
 	/** A tile's corners' texture coordinates (south-west, south-east, north-east, north-west), as the client's. */
