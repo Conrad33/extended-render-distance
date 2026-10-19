@@ -52,11 +52,31 @@ final class RegionLayer
 	{
 		final Mesh[] meshes;
 		final boolean[] pending;
+		/** Meshes of an older copy of the square: drawn until they're built again. */
+		final boolean[] stale;
+		/** Bumped when the meshes go stale, so builds started before are dropped. */
+		int version;
 
 		Slot(int levels)
 		{
 			meshes = new Mesh[levels];
 			pending = new boolean[levels];
+			stale = new boolean[levels];
+		}
+
+		boolean wants(int level)
+		{
+			return (meshes[level] == null || stale[level]) && !pending[level];
+		}
+
+		void markStale()
+		{
+			version++;
+			for (int l = 0; l < meshes.length; l++)
+			{
+				stale[l] = meshes[l] != null;
+				pending[l] = false;
+			}
 		}
 	}
 
@@ -107,6 +127,47 @@ final class RegionLayer
 	}
 
 	/**
+	 * Moves on to a newer copy of the world, built by {@code builder}. Squares that are the same object as before
+	 * keep their meshes; squares it has a new object for keep drawing the old meshes until they're built again.
+	 */
+	void update(WorldTerrain world, Builder builder)
+	{
+		Map<WorldTerrain.Region, Slot> old = new IdentityHashMap<>(slots);
+		slots.clear();
+		for (WorldTerrain.Region r : world.regions())
+		{
+			Slot slot = old.remove(r);
+			if (slot == null && this.world != null)
+			{
+				WorldTerrain.Region was = this.world.region(r.rx, r.ry);
+				slot = was == null ? null : old.remove(was);
+				if (slot != null)
+					slot.markStale();
+			}
+			if (slot != null)
+				slots.put(r, slot);
+		}
+		for (Slot slot : old.values())
+		{
+			for (int l = 0; l < slot.meshes.length; l++)
+				freeMesh(slot, l);
+		}
+		this.world = world;
+		this.builder = builder;
+	}
+
+	/** Builds these squares again with {@code builder}, drawing their old meshes until then. */
+	void rebuild(java.util.function.Predicate<WorldTerrain.Region> which, Builder builder)
+	{
+		for (Map.Entry<WorldTerrain.Region, Slot> e : slots.entrySet())
+		{
+			if (which.test(e.getKey()))
+				e.getValue().markStale();
+		}
+		this.builder = builder;
+	}
+
+	/**
 	 * Draws the layer. {@code proj} is the camera-relative projection; the camera is at scene position (cx, cy,
 	 * cz) in a scene whose south-west tile is world tile (baseX, baseY). {@code uniOffset} is the program's offset
 	 * uniform. Squares further than {@code maxDistance} tiles, or {@code hidden} (wholly drawn by the game itself),
@@ -148,12 +209,12 @@ final class RegionLayer
 				slots.put(r, slot);
 			}
 
-			if (everywhere && slot.meshes[levels() - 1] == null && !slot.pending[levels() - 1])
+			if (everywhere && slot.wants(levels() - 1))
 				wanted.add(new Object[]{r, levels() - 1, dist, true});
 			float ox = (r.baseX() - baseX) * 128f - cx, oz = (r.baseY() - baseY) * 128f - cz;
 			Mesh any = best(slot, level);
 			boolean visible = any == null || visible(proj, ox, any.minHeight - cy, any.maxHeight - cy, oz);
-			if (visible && slot.meshes[level] == null && !slot.pending[level])
+			if (visible && slot.wants(level))
 				wanted.add(new Object[]{r, level, dist, false});
 			// finer levels than needed, once well out of their range
 			for (int l = 0; l < level; l++)
@@ -249,14 +310,16 @@ final class RegionLayer
 				break;
 			WorldTerrain.Region r = (WorldTerrain.Region) job[0];
 			int level = (int) job[1];
-			slots.get(r).pending[level] = true;
+			Slot slot = slots.get(r);
+			slot.pending[level] = true;
+			int version = slot.version;
 			inFlight.incrementAndGet();
 			workers.execute(() ->
 			{
 				try
 				{
 					if (gen == generation)
-						built.add(new Object[]{b.build(r, level), level, gen});
+						built.add(new Object[]{b.build(r, level), level, gen, version});
 				}
 				catch (RuntimeException | OutOfMemoryError e)
 				{
@@ -282,7 +345,7 @@ final class RegionLayer
 			if ((int) job[2] != generation)
 				continue;
 			Slot slot = slots.get(b.region);
-			if (slot == null)
+			if (slot == null || slot.version != (int) job[3])
 				continue;
 			slot.pending[level] = false;
 			freeMesh(slot, level);
@@ -313,6 +376,7 @@ final class RegionLayer
 	private static void freeMesh(Slot slot, int level)
 	{
 		Mesh m = slot.meshes[level];
+		slot.stale[level] = false;
 		if (m == null)
 			return;
 		if (m.vao != 0)

@@ -26,20 +26,27 @@ public final class WorldCache
 	public final WorldTerrain terrain;
 	private final ObjectDefinition[] objects;
 	/** Model files read ahead for scenery being built, by id. */
-	private final Map<Integer, byte[]> prefetched = new ConcurrentHashMap<>();
+	private final Map<Integer, byte[]> prefetched;
 
-	private WorldCache(CacheSource source, WorldTerrain terrain, ObjectDefinition[] objects)
+	private WorldCache(CacheSource source, WorldTerrain terrain, ObjectDefinition[] objects,
+		Map<Integer, byte[]> prefetched)
 	{
 		this.source = source;
 		this.terrain = terrain;
 		this.objects = objects;
+		this.prefetched = prefetched;
 	}
 
 	/** Reads the map and the object definitions. Blocks while the reads are served: off the client thread. */
 	public static WorldCache open(CacheSource source) throws InterruptedException
 	{
+		return open(source, TerrainLoader.load(source).terrain);
+	}
+
+	/** Reads the object definitions, for this map. Blocks while the reads are served: off the client thread. */
+	public static WorldCache open(CacheSource source, WorldTerrain terrain) throws InterruptedException
+	{
 		long start = System.nanoTime();
-		WorldTerrain terrain = TerrainLoader.load(source);
 		Map<Integer, byte[]> files = TerrainLoader.configFiles(source, CacheSource.OBJECTS);
 		int max = 0;
 		for (int id : files.keySet())
@@ -57,9 +64,15 @@ public final class WorldCache
 				log.debug("Extended Render Distance: object {} didn't decode", e.getKey(), ex);
 			}
 		}
-		log.info("Extended Render Distance: game cache ready in {} ms ({} objects)", (System.nanoTime() - start) / 1_000_000,
-			objects.length);
-		return new WorldCache(source, terrain, objects);
+		log.info("Extended Render Distance: read {} object definitions in {} ms", objects.length,
+			(System.nanoTime() - start) / 1_000_000);
+		return new WorldCache(source, terrain, objects, new ConcurrentHashMap<>());
+	}
+
+	/** This cache with more of the map read. */
+	public WorldCache withTerrain(WorldTerrain terrain)
+	{
+		return new WorldCache(source, terrain, objects, prefetched);
 	}
 
 	public ObjectDefinition object(int id)

@@ -39,13 +39,14 @@ public class ExtendedRenderDistancePlugin extends Plugin
 	{
 		// read the world from the client's game cache in the background
 		clientCache.open();
-		worldData.whenLoaded(clientCache, farRenderer::setWorld);
+		worldData.start(clientCache, farRenderer::setWorld);
 	}
 
 	@Override
 	protected void shutDown()
 	{
 		clientThread.invoke(wrapper::unwrap);
+		worldData.stop();
 		clientCache.close();
 	}
 

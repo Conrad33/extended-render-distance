@@ -2,8 +2,10 @@ package com.extendedrenderdistance.world;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import com.extendedrenderdistance.cache.definitions.LocationsDefinition;
 import com.extendedrenderdistance.cache.definitions.MapDefinition;
@@ -60,14 +62,32 @@ public final class TerrainLoader
 
 	/** Map squares read per batch (one batch runs on the client thread in a frame's slice). */
 	private static final int BATCH = 24;
-	/**
-	 * When squares the client doesn't have yet are asked for again (seconds after the first pass): asking makes the
-	 * client fetch them over its own update connection, so only a few times, and never again after.
-	 */
-	private static final int[] RETRY_AFTER_SECONDS = {10, 30, 60};
+
+	/** The terrain read so far, and what's needed to read the squares the client didn't have yet. */
+	public static final class Progress
+	{
+		public final WorldTerrain terrain;
+		/** Squares (rx << 8 | ry) the client didn't have yet: asking for them makes it fetch them. */
+		public final List<Integer> missing;
+		private final UnderlayDefinition[] underlays;
+		private final int[] overlayColours;
+		private final Map<Integer, Raw> raws;
+		private final Map<Integer, WorldTerrain.Region> regions;
+
+		private Progress(WorldTerrain terrain, List<Integer> missing, UnderlayDefinition[] underlays,
+			int[] overlayColours, Map<Integer, Raw> raws, Map<Integer, WorldTerrain.Region> regions)
+		{
+			this.terrain = terrain;
+			this.missing = missing;
+			this.underlays = underlays;
+			this.overlayColours = overlayColours;
+			this.raws = raws;
+			this.regions = regions;
+		}
+	}
 
 	/** Reads the terrain and placements. Blocks while the reads are served: off the client thread. */
-	public static WorldTerrain load(CacheSource cache) throws InterruptedException
+	public static Progress load(CacheSource cache) throws InterruptedException
 	{
 		long start = System.nanoTime();
 		UnderlayDefinition[] underlays = loadUnderlays(cache);
@@ -94,66 +114,102 @@ public final class TerrainLoader
 		}
 
 		Map<Integer, Raw> raws = new HashMap<>();
-		List<Integer> missing = squares;
-		long firstPass = System.currentTimeMillis();
-		int failed = 0;
-		for (int attempt = 0; ; attempt++)
+		List<Integer> missing = read(cache, squares, underlays, raws);
+		Map<Integer, WorldTerrain.Region> regions = new HashMap<>();
+		for (Map.Entry<Integer, Raw> e : raws.entrySet())
+			regions.put(e.getKey(), region(e.getValue(), raws, underlays));
+		int[] colours = overlayColours(overlays);
+		log.info("Extended Render Distance: read {} map squares of terrain and objects in {} ms ({} not available yet)",
+			regions.size(), (System.nanoTime() - start) / 1_000_000, missing.size());
+		return new Progress(new WorldTerrain(new ArrayList<>(regions.values()), colours), missing, underlays, colours,
+			raws, regions);
+	}
+
+	/**
+	 * Reads the squares that were missing again. The squares that arrived and the ones next to them (their edges
+	 * blend into the new ones) are new {@link WorldTerrain.Region}s; every other square is the same object as before,
+	 * and with nothing new, so is the terrain.
+	 */
+	public static Progress retry(CacheSource cache, Progress last) throws InterruptedException
+	{
+		Map<Integer, Raw> raws = new HashMap<>(last.raws);
+		List<Integer> missing = read(cache, last.missing, last.underlays, raws);
+		if (raws.size() == last.raws.size())
+			return new Progress(last.terrain, missing, last.underlays, last.overlayColours, last.raws, last.regions);
+
+		Set<Integer> changed = new HashSet<>();
+		for (int id : raws.keySet())
 		{
-			List<Integer> stillMissing = new ArrayList<>();
-			for (int i = 0; i < missing.size(); i += BATCH)
+			if (last.raws.containsKey(id))
+				continue;
+			for (int dx = -1; dx <= 1; dx++)
 			{
-				List<Integer> batch = missing.subList(i, Math.min(missing.size(), i + BATCH));
-				byte[][][] data = cache.read(files ->
+				for (int dy = -1; dy <= 1; dy++)
 				{
-					byte[][][] out = new byte[batch.size()][][];
-					for (int k = 0; k < batch.size(); k++)
-					{
-						out[k] = new byte[][]{files.file(CacheSource.MAPS, batch.get(k), 0),
-							files.file(CacheSource.MAPS, batch.get(k), 1)};
-					}
-					return out;
-				});
-				for (int k = 0; k < batch.size(); k++)
-				{
-					int id = batch.get(k);
-					if (data[k][0] == null)
-					{
-						stillMissing.add(id);
-						continue;
-					}
-					if (data[k][0].length < MIN_TERRAIN_BYTES)
-						continue;
-					try
-					{
-						raws.put(id, decode(id >> 8, id & 255, data[k][0], data[k][1], underlays));
-					}
-					catch (RuntimeException e)
-					{
-						// a square that won't decode is left out (it shows as void)
-						failed++;
-					}
+					int rx = (id >> 8) + dx, ry = (id & 255) + dy;
+					if (rx >= 0 && ry >= 0 && rx < 256 && ry < 256 && raws.containsKey(rx << 8 | ry))
+						changed.add(rx << 8 | ry);
 				}
 			}
-			missing = stillMissing;
-			if (missing.isEmpty() || attempt >= RETRY_AFTER_SECONDS.length)
-				break;
-			// asking for them made the client fetch them: look again in a while
-			long wait = firstPass + RETRY_AFTER_SECONDS[attempt] * 1000L - System.currentTimeMillis();
-			if (wait > 0)
-				Thread.sleep(wait);
+		}
+		Map<Integer, WorldTerrain.Region> regions = new HashMap<>(last.regions);
+		for (int id : changed)
+			regions.put(id, region(raws.get(id), raws, last.underlays));
+		log.info("Extended Render Distance: {} more map squares arrived ({} still not available)",
+			raws.size() - last.raws.size(), missing.size());
+		return new Progress(new WorldTerrain(new ArrayList<>(regions.values()), last.overlayColours), missing,
+			last.underlays, last.overlayColours, raws, regions);
+	}
+
+	/** Reads these squares into {@code raws}; returns the ones the client doesn't have yet. */
+	private static List<Integer> read(CacheSource cache, List<Integer> squares, UnderlayDefinition[] underlays,
+		Map<Integer, Raw> raws) throws InterruptedException
+	{
+		List<Integer> missing = new ArrayList<>();
+		int failed = 0;
+		for (int i = 0; i < squares.size(); i += BATCH)
+		{
+			List<Integer> batch = squares.subList(i, Math.min(squares.size(), i + BATCH));
+			byte[][][] data = cache.read(files ->
+			{
+				byte[][][] out = new byte[batch.size()][][];
+				for (int k = 0; k < batch.size(); k++)
+				{
+					out[k] = new byte[][]{files.file(CacheSource.MAPS, batch.get(k), 0),
+						files.file(CacheSource.MAPS, batch.get(k), 1)};
+				}
+				return out;
+			});
+			for (int k = 0; k < batch.size(); k++)
+			{
+				int id = batch.get(k);
+				if (data[k][0] == null)
+				{
+					missing.add(id);
+					continue;
+				}
+				if (data[k][0].length < MIN_TERRAIN_BYTES)
+					continue;
+				try
+				{
+					raws.put(id, decode(id >> 8, id & 255, data[k][0], data[k][1], underlays));
+				}
+				catch (RuntimeException e)
+				{
+					// a square that won't decode is left out (it shows as void)
+					failed++;
+				}
+			}
 		}
 		if (failed > 0)
 			log.warn("Extended Render Distance: {} map squares couldn't be read", failed);
-		if (!missing.isEmpty())
-			log.warn("Extended Render Distance: {} map squares weren't available from the client", missing.size());
+		return missing;
+	}
 
-		List<WorldTerrain.Region> out = new ArrayList<>(raws.size());
-		for (Raw raw : raws.values())
-			out.add(new WorldTerrain.Region(raw.rx, raw.ry, raw.height, blend(raw, raws, underlays), raw.overlay,
-				raw.shape, raw.rise, raw.locs, raw.floors));
-		log.info("Extended Render Distance: read {} map squares of terrain and objects in {} ms", out.size(),
-			(System.nanoTime() - start) / 1_000_000);
-		return new WorldTerrain(out, overlayColours(overlays));
+	private static WorldTerrain.Region region(Raw raw, Map<Integer, Raw> raws, UnderlayDefinition[] underlays)
+	{
+		return new WorldTerrain.Region(raw.rx, raw.ry, raw.height, blend(raw, raws, underlays), raw.overlay, raw.shape,
+			raw.rise, raw.locs, raw.floors);
 	}
 
 	/** One map square from its terrain file and its placements file (which may be null). */

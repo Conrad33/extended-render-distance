@@ -67,6 +67,13 @@ public class FarRenderer
 	/** The part of the map drawn, and the one being worked out for where the player is now. */
 	private Reach reach, builtReach;
 	private CompletableFuture<Reach> nextReach;
+	/** The world the reach was worked out on, and the one the next is being worked out on. */
+	private WorldCache reachFor, nextReachFor;
+	/**
+	 * The reach the current one was worked out again from, for more of the world, with the player still in it:
+	 * only the squares where they differ are built again.
+	 */
+	private Reach refreshedFrom, nextRefreshes;
 	private RegionLayer terrain, scenery;
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
@@ -248,8 +255,9 @@ public class FarRenderer
 	}
 
 	/**
-	 * Keeps the reach on where the player is: when they step out of it (into a dungeon, through a teleport), the
-	 * new one is worked out in the background. False while there's none for here yet (draw nothing meanwhile).
+	 * Keeps the reach on where the player is: when they step out of it (into a dungeon, through a teleport), or
+	 * more of the world is read, the new one is worked out in the background. False while there's none for here
+	 * yet (draw nothing meanwhile).
 	 */
 	private boolean updateReach(WorldCache w)
 	{
@@ -260,51 +268,85 @@ public class FarRenderer
 		if (nextReach != null && nextReach.isDone())
 		{
 			reach = nextReach.getNow(null);
+			reachFor = nextReachFor;
+			refreshedFrom = nextRefreshes;
 			nextReach = null;
 		}
 		boolean here = reach != null && reach.has(at.getX(), at.getY());
-		if (!here && nextReach == null)
+		if ((!here || reachFor != w) && nextReach == null)
 		{
 			int x = at.getX(), y = at.getY();
+			nextReachFor = w;
+			nextRefreshes = here ? reach : null;
 			nextReach = CompletableFuture.supplyAsync(() -> Reach.from(w.terrain, x, y));
 		}
 		return here;
 	}
 
-	/** (Re)builds the layers when the world, the reach or the distances change. */
+	/**
+	 * (Re)builds the layers when the world, the reach or the distances change. More of the same world, or its
+	 * reach worked out again for that, only builds again the squares that changed; their old meshes are drawn
+	 * meanwhile, so the view doesn't flicker as the world fills in.
+	 */
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
 		boolean simplify = config.performanceMode();
-		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks
-			&& simplify == builtSimplify && terrain != null)
+		boolean settings = sc != builtScenery || lm != builtLandmarks || simplify != builtSimplify;
+		if (w == builtFor && reach == builtReach && !settings && terrain != null)
 			return;
 		Reach rc = reach;
-		if (terrain == null || w != builtFor || rc != builtReach)
+		Reach was = builtReach;
+		boolean reachRefreshed = rc != was && was != null && refreshedFrom == was;
+		boolean incremental = terrain != null && builtFor != null && (rc == was || reachRefreshed);
+		int[] tex = texColours;
+		RegionLayer.Builder ground = (r, level) -> TerrainMesher.build(w.terrain, r, TERRAIN_STEPS[level], tex, rc);
+		ObjectMesher objects = new ObjectMesher(w, texColours);
+		// unsimplified: the same levels (what's drawn where), but nothing snapped
+		ObjectMesher.Detail[] detail = simplify ? SCENERY_DETAIL : unsimplified();
+		RegionLayer.Builder things = (r, level) -> objects.build(r, detail[level], rc);
+
+		if (!incremental)
 		{
 			if (terrain != null)
 				terrain.free();
-			int[] tex = texColours;
 			terrain = new RegionLayer("terrain", TERRAIN_RANGES, true, 1, 24, 12);
 			terrain.setFilter(r -> rc == null || rc.touches(r));
-			terrain.setWorld(w.terrain, (r, level) -> TerrainMesher.build(w.terrain, r, TERRAIN_STEPS[level], tex, rc));
+			terrain.setWorld(w.terrain, ground);
 		}
-		if (scenery != null)
-			scenery.free();
-		ObjectMesher objects = new ObjectMesher(w, texColours);
-		// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
-		// simplified more and more out to the building distance
-		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
-		scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
-		scenery.setFilter(r -> rc == null || rc.touches(r));
-		// unsimplified: the same levels (what's drawn where), but nothing snapped
-		ObjectMesher.Detail[] detail = simplify ? SCENERY_DETAIL : unsimplified();
-		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, detail[level], rc));
+		else
+			update(terrain, w, rc, was, ground);
+
+		if (!incremental || settings)
+		{
+			if (scenery != null)
+				scenery.free();
+			// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
+			// simplified more and more out to the building distance
+			double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
+			scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
+			scenery.setFilter(r -> rc == null || rc.touches(r));
+			scenery.setWorld(w.terrain, things);
+		}
+		else
+			update(scenery, w, rc, was, things);
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;
 		builtLandmarks = lm;
 		builtSimplify = simplify;
+	}
+
+	/** Moves a layer on to more of the world and the reach worked out again for it. */
+	private void update(RegionLayer layer, WorldCache w, Reach rc, Reach was, RegionLayer.Builder builder)
+	{
+		if (w != builtFor)
+			layer.update(w.terrain, builder);
+		if (rc != was)
+		{
+			layer.rebuild(r -> rc.differsIn(was, r), builder);
+			layer.setFilter(r -> rc.touches(r));
+		}
 	}
 
 	private static ObjectMesher.Detail[] unsimplified()

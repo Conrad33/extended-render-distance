@@ -46,6 +46,21 @@ public final class Reach
 		return squares.get(r.rx << 8 | r.ry);
 	}
 
+	/** Whether this and {@code other} differ anywhere in the map square. */
+	public boolean differsIn(Reach other, WorldTerrain.Region r)
+	{
+		for (int i = 0; i < 8; i++)
+		{
+			for (int j = 0; j < 8; j++)
+			{
+				int c = (r.rx * 8 + i) * SIDE + r.ry * 8 + j;
+				if (chunks.get(c) != other.chunks.get(c))
+					return true;
+			}
+		}
+		return false;
+	}
+
 	public int area()
 	{
 		return area;
