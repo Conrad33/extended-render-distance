@@ -6,7 +6,6 @@ import java.awt.Container;
 import java.awt.Toolkit;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ContainerEvent;
-import java.lang.reflect.Method;
 import java.text.ParseException;
 import java.util.HashMap;
 import java.util.Map;
@@ -17,8 +16,6 @@ import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.client.config.ConfigItem;
-import net.runelite.client.config.Range;
 
 /**
  * Makes this plugin's number settings take a typed value that's out of range as the nearest limit (typing 9999999
@@ -31,23 +28,26 @@ import net.runelite.client.config.Range;
 @Singleton
 public class SpinnerClamp
 {
-	/** Tooltip of each setting's label, as RuneLite's config panel writes it, to the setting's range. */
-	private final Map<String, Range> ranges = new HashMap<>();
+	/** Tooltip of each setting's label, as RuneLite's config panel writes it, to the setting's {min, max}. */
+	private final Map<String, int[]> ranges = new HashMap<>();
 	private final AWTEventListener listener = this::componentAdded;
 	private boolean installed;
 
 	public void install()
 	{
 		ranges.clear();
-		for (Method m : ExtendedRenderDistanceConfig.class.getMethods())
-		{
-			ConfigItem item = m.getAnnotation(ConfigItem.class);
-			Range range = m.getAnnotation(Range.class);
-			if (item != null && range != null && m.getReturnType() == int.class)
-				ranges.put("<html>" + item.name() + ":<br>" + item.description() + "</html>", range);
-		}
+		range(ExtendedRenderDistanceConfig.TERRAIN_NAME, ExtendedRenderDistanceConfig.TERRAIN_DESCRIPTION,
+			ExtendedRenderDistanceConfig.MIN_TERRAIN);
+		range(ExtendedRenderDistanceConfig.STRUCTURE_NAME, ExtendedRenderDistanceConfig.STRUCTURE_DESCRIPTION, 0);
+		range(ExtendedRenderDistanceConfig.SCENERY_NAME, ExtendedRenderDistanceConfig.SCENERY_DESCRIPTION, 0);
 		Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.CONTAINER_EVENT_MASK);
 		installed = true;
+	}
+
+	private void range(String name, String description, int min)
+	{
+		ranges.put("<html>" + name + ":<br>" + description + "</html>",
+			new int[]{min, ExtendedRenderDistanceConfig.MAX_DISTANCE});
 	}
 
 	public void uninstall()
@@ -62,19 +62,19 @@ public class SpinnerClamp
 		if (e.getID() != ContainerEvent.COMPONENT_ADDED || !(((ContainerEvent) e).getChild() instanceof JSpinner))
 			return;
 		JSpinner spinner = (JSpinner) ((ContainerEvent) e).getChild();
-		Range range = rangeFor(((ContainerEvent) e).getContainer());
+		int[] range = rangeFor(((ContainerEvent) e).getContainer());
 		if (range != null && spinner.getModel() instanceof SpinnerNumberModel)
 			SwingUtilities.invokeLater(() -> clamp(spinner, range));
 	}
 
 	/** The range of the setting whose label sits next to the spinner, if it's one of ours. */
-	private Range rangeFor(Container item)
+	private int[] rangeFor(Container item)
 	{
 		for (Component c : item.getComponents())
 		{
 			if (c instanceof JLabel && ((JLabel) c).getToolTipText() != null)
 			{
-				Range r = ranges.get(((JLabel) c).getToolTipText());
+				int[] r = ranges.get(((JLabel) c).getToolTipText());
 				if (r != null)
 					return r;
 			}
@@ -82,7 +82,7 @@ public class SpinnerClamp
 		return null;
 	}
 
-	private static void clamp(JSpinner spinner, Range range)
+	private static void clamp(JSpinner spinner, int[] range)
 	{
 		if (!(spinner.getEditor() instanceof JSpinner.DefaultEditor))
 			return;
@@ -90,7 +90,7 @@ public class SpinnerClamp
 		JFormattedTextField.AbstractFormatterFactory delegate = field.getFormatterFactory();
 		if (delegate instanceof ClampingFactory)
 			return;
-		field.setFormatterFactory(new ClampingFactory(delegate, range.min(), range.max()));
+		field.setFormatterFactory(new ClampingFactory(delegate, range[0], range[1]));
 	}
 
 	/** Formats as before; reads any whole number, brought within [min, max]. */

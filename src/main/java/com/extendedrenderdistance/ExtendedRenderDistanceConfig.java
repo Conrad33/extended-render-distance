@@ -10,11 +10,21 @@ public interface ExtendedRenderDistanceConfig extends Config
 {
 	String GROUP = "extendedrenderdistance";
 
-	@Range(min = 200, max = 5000)
+	/** The distances' limits, in tiles. */
+	int MIN_TERRAIN = 200, MAX_DISTANCE = 5000;
+
+	String TERRAIN_NAME = "Terrain distance";
+	String TERRAIN_DESCRIPTION = "How far the terrain is rendered, in tiles.";
+	String STRUCTURE_NAME = "Structure distance";
+	String STRUCTURE_DESCRIPTION = "How far structures (buildings, trees, etc) are rendered, in tiles.";
+	String SCENERY_NAME = "Scenery distance";
+	String SCENERY_DESCRIPTION = "How far scenery (grass, rocks, etc) are rendered, in tiles. (Performance heavy)";
+
+	@Range(min = MIN_TERRAIN, max = MAX_DISTANCE)
 	@ConfigItem(
 		keyName = "terrainDistance",
-		name = "Terrain distance",
-		description = "How far the terrain is rendered, in tiles.",
+		name = TERRAIN_NAME,
+		description = TERRAIN_DESCRIPTION,
 		position = 1
 	)
 	default int terrainDistance()
@@ -22,11 +32,11 @@ public interface ExtendedRenderDistanceConfig extends Config
 		return 5000;
 	}
 
-	@Range(min = 0, max = 5000)
+	@Range(min = 0, max = MAX_DISTANCE)
 	@ConfigItem(
 		keyName = "structureDistance",
-		name = "Structure distance",
-		description = "How far structures (buildings, trees, etc) are rendered, in tiles.",
+		name = STRUCTURE_NAME,
+		description = STRUCTURE_DESCRIPTION,
 		position = 2
 	)
 	default int structureDistance()
@@ -34,11 +44,11 @@ public interface ExtendedRenderDistanceConfig extends Config
 		return 5000;
 	}
 
-	@Range(min = 0, max = 5000)
+	@Range(min = 0, max = MAX_DISTANCE)
 	@ConfigItem(
 		keyName = "sceneryDistance",
-		name = "Scenery distance",
-		description = "How far scenery (grass, rocks, etc) are rendered, in tiles. (Performance heavy)",
+		name = SCENERY_NAME,
+		description = SCENERY_DESCRIPTION,
 		position = 3
 	)
 	default int sceneryDistance()
