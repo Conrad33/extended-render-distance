@@ -84,6 +84,7 @@ final class Shaders
 		"uniform float depthScale;",
 		"uniform int tick;",
 		"uniform vec2 textureAnimations[256];",
+		"uniform float textureLightMode;",
 		"out vec3 fColour;",
 		"out vec3 fPos;",
 		"flat out int fAnchored;",
@@ -108,7 +109,7 @@ final class Shaders
 		"  int id = texInfo & 255;",
 		"  fTexture = id | ((texInfo & 0x8000) != 0 ? 0x100 : 0);",
 		"  fTexLight = float(texInfo >> 8 & 127) / 127.0;",
-		"  fTexTint = hslToRgb(texInfo >> 8 & 127, brightness);",
+		"  fTexTint = textureLightMode > 0.5 ? hslToRgb(texInfo >> 8 & 127, brightness) : vec3(0.0);",
 		"  fHsl = vec3(colour >> 10 & 63, colour >> 7 & 7, colour & 127);",
 		"  fUv = uv / 256.0;",
 		"  if (id > 0) fUv += float(tick) * textureAnimations[min(id - 1, 255)] / 128.0;",
@@ -151,8 +152,11 @@ final class Shaders
 		// as the GPU plugin: the smoothly blended colour, or with smooth banding off the colour blended in steps (hue,
 		// saturation and lightness blended apart: a far quad's corners can be different ground, whose packed colours
 		// blended together would mix their bits)
-		"  ivec3 h = ivec3(fHsl);",
-		"  vec3 colour = mix(fColour, hslToRgb(h.x << 10 | h.y << 7 | h.z, brightness), smoothBanding);",
+		"  vec3 colour = fColour;",
+		"  if (smoothBanding > 0.5) {",
+		"    ivec3 h = ivec3(fHsl);",
+		"    colour = hslToRgb(h.x << 10 | h.y << 7 | h.z, brightness);",
+		"  }",
 		"  int id = fTexture & 255;",
 		"  if (texturesOn == 1 && id > 0 && dist < textureEnd) {",
 		// coarse ground repeats its texture every tile: the gradients of the unwrapped coordinates keep the mip level
