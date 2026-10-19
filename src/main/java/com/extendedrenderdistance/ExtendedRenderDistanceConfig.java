@@ -10,7 +10,7 @@ public interface ExtendedRenderDistanceConfig extends Config
 {
 	String GROUP = "extendedrenderdistance";
 
-	@Range(min = 200, max = 4000)
+	@Range(min = 200, max = 10000)
 	@ConfigItem(
 		keyName = "viewRange",
 		name = "View distance",
@@ -22,7 +22,7 @@ public interface ExtendedRenderDistanceConfig extends Config
 		return 1500;
 	}
 
-	@Range(min = 0, max = 800)
+	@Range(min = 0, max = 10000)
 	@ConfigItem(
 		keyName = "sceneryRange",
 		name = "Scenery distance",
@@ -34,7 +34,7 @@ public interface ExtendedRenderDistanceConfig extends Config
 		return 320;
 	}
 
-	@Range(min = 0, max = 3000)
+	@Range(min = 0, max = 10000)
 	@ConfigItem(
 		keyName = "landmarkRange",
 		name = "Building distance",
