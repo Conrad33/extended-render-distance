@@ -82,7 +82,7 @@ final class RegionLayer
 
 	private final String name;
 	/** Level i is used out to ranges[i] tiles. */
-	private final double[] ranges;
+	private double[] ranges;
 	/** Whether the last level is used beyond the last range (else nothing is drawn there). */
 	private final boolean everywhere;
 	private final int maxInFlight, uploadsPerFrame;
@@ -114,6 +114,15 @@ final class RegionLayer
 	private int levels()
 	{
 		return everywhere ? ranges.length + 1 : ranges.length;
+	}
+
+	/**
+	 * Changes how far out each level is used (as many ranges as before). What's built is kept: squares switch
+	 * level as they're drawn, and meshes out of range are let go as usual.
+	 */
+	void setRanges(double[] ranges)
+	{
+		this.ranges = ranges;
 	}
 
 	/** Uses this world and builder (null for none); everything built before is freed. */

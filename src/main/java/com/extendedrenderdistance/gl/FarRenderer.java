@@ -292,8 +292,8 @@ public class FarRenderer
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
 		boolean simplify = config.performanceMode();
-		boolean settings = sc != builtScenery || lm != builtLandmarks || simplify != builtSimplify;
-		if (w == builtFor && reach == builtReach && !settings && terrain != null)
+		boolean distances = sc != builtScenery || lm != builtLandmarks;
+		if (w == builtFor && reach == builtReach && !distances && simplify == builtSimplify && terrain != null)
 			return;
 		Reach rc = reach;
 		Reach was = builtReach;
@@ -317,19 +317,26 @@ public class FarRenderer
 		else
 			update(terrain, w, rc, was, ground);
 
-		if (!incremental || settings)
+		// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
+		// simplified more and more out to the building distance
+		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
+		if (!incremental)
 		{
 			if (scenery != null)
 				scenery.free();
-			// everything exactly up close, simplified out to the scenery distance, then buildings and tall things
-			// simplified more and more out to the building distance
-			double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
 			scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
 			scenery.setFilter(r -> rc == null || rc.touches(r));
 			scenery.setWorld(w.terrain, things);
 		}
 		else
+		{
 			update(scenery, w, rc, was, things);
+			// the distances only pick which level is drawn where: what's built stays right
+			if (distances)
+				scenery.setRanges(ranges);
+			if (simplify != builtSimplify)
+				scenery.rebuild(r -> true, things);
+		}
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;
