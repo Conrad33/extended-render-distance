@@ -45,7 +45,8 @@ final class RegionLayer
 
 	private static final class Mesh
 	{
-		int vao, vbo, count, minHeight, maxHeight;
+		int vao, vbo, ebo, count, minHeight, maxHeight;
+		boolean shortIndices;
 	}
 
 	private static final class Slot
@@ -235,7 +236,7 @@ final class RegionLayer
 				continue;
 			glUniform3f(uniOffset, ox, -cy, oz);
 			glBindVertexArray(any.vao);
-			glDrawArrays(GL_TRIANGLES, 0, any.count);
+			glDrawElements(GL_TRIANGLES, any.count, any.shortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, 0);
 		}
 		glBindVertexArray(0);
 		request(wanted);
@@ -360,6 +361,7 @@ final class RegionLayer
 			freeMesh(slot, level);
 			Mesh m = new Mesh();
 			m.count = b.count;
+			m.shortIndices = b.shortIndices;
 			m.minHeight = b.minHeight;
 			m.maxHeight = b.maxHeight;
 			if (b.count > 0)
@@ -369,16 +371,21 @@ final class RegionLayer
 				glBindVertexArray(m.vao);
 				glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
 				glBufferData(GL_ARRAY_BUFFER, b.vertices, GL_STATIC_DRAW);
-				// the driver reads the buffer's memory during the call: it must not be collected (and freed) before
+				// the index buffer is part of the vertex array's state: bound after it
+				m.ebo = glGenBuffers();
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
+				glBufferData(GL_ELEMENT_ARRAY_BUFFER, b.indices, GL_STATIC_DRAW);
+				// the driver reads the buffers' memory during the calls: they must not be collected (and freed) before
 				Reference.reachabilityFence(b.vertices);
-				glVertexAttribPointer(0, 3, GL_FLOAT, false, TerrainMesher.STRIDE, 0);
+				Reference.reachabilityFence(b.indices);
+				glVertexAttribPointer(0, 3, GL_SHORT, false, TerrainMesher.STRIDE, 0);
 				glEnableVertexAttribArray(0);
-				glVertexAttribIPointer(1, 1, GL_INT, TerrainMesher.STRIDE, 12);
-				glEnableVertexAttribArray(1);
-				glVertexAttribPointer(2, 2, GL_FLOAT, false, TerrainMesher.STRIDE, 16);
-				glEnableVertexAttribArray(2);
-				glVertexAttribIPointer(3, 1, GL_INT, TerrainMesher.STRIDE, 24);
+				glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, TerrainMesher.STRIDE, 6);
 				glEnableVertexAttribArray(3);
+				glVertexAttribIPointer(1, 1, GL_INT, TerrainMesher.STRIDE, 8);
+				glEnableVertexAttribArray(1);
+				glVertexAttribPointer(2, 2, GL_SHORT, false, TerrainMesher.STRIDE, 12);
+				glEnableVertexAttribArray(2);
 				glBindVertexArray(0);
 				glBindBuffer(GL_ARRAY_BUFFER, 0);
 			}
@@ -396,6 +403,8 @@ final class RegionLayer
 			glDeleteVertexArrays(m.vao);
 		if (m.vbo != 0)
 			glDeleteBuffers(m.vbo);
+		if (m.ebo != 0)
+			glDeleteBuffers(m.ebo);
 		slot.meshes[level] = null;
 	}
 

@@ -65,8 +65,8 @@ final class Shaders
 	/**
 	 * Camera-relative positions (the client's axes, y down) with a packed colour (bits 0 to 15; draw priority in 16 to
 	 * 18; for scenery, the tile within its square of the object or floor it belongs to, plus one, in 19 to 31), and
-	 * texture coordinates and a texture (its id plus one in bits 0 to 15, the light on it in 16 to 23, repeated tile
-	 * by tile when bit 24 is set) scrolled as the GPU plugin animates it;
+	 * texture coordinates (256ths) and a texture (its id plus one in bits 0 to 7, the light on it in 8 to 14,
+	 * repeated tile by tile when bit 15 is set) scrolled as the GPU plugin animates it;
 	 * depth pushed back by depthScale so the real scene wins ties, and pulled forward a hair per priority level so a
 	 * detail (a window) wins over the face it lies on even where far simplification has flattened the two together;
 	 * nothing the game draws itself (scenery whose tile is in a zone the GPU plugin drew; ground well inside them,
@@ -103,10 +103,10 @@ final class Shaders
 		"  gl_Position = c;",
 		"  fColour = hslToRgb(colour & 65535, brightness);",
 		"  fPos = p;",
-		"  fTexture = texInfo & 0x100ffff;",
-		"  fTexLight = float(texInfo >> 16 & 255) / 127.0;",
-		"  int id = texInfo & 65535;",
-		"  fUv = uv;",
+		"  int id = texInfo & 255;",
+		"  fTexture = id | ((texInfo & 0x8000) != 0 ? 0x100 : 0);",
+		"  fTexLight = float(texInfo >> 8 & 127) / 127.0;",
+		"  fUv = uv / 256.0;",
 		"  if (id > 0) fUv += float(tick) * textureAnimations[min(id - 1, 255)] / 128.0;",
 		"}");
 
@@ -140,10 +140,10 @@ final class Shaders
 		"  float dist = length(fPos.xz);",
 		"  if (dist > viewEnd) discard;",
 		"  vec3 colour = fColour;",
-		"  int id = fTexture & 65535;",
+		"  int id = fTexture & 255;",
 		"  if (texturesOn == 1 && id > 0 && dist < textureEnd) {",
 		// coarse ground repeats its texture every tile: the gradients of the unwrapped coordinates keep the mip level
-		"    vec2 at = (fTexture & 0x1000000) != 0 ? fract(fUv) : fUv;",
+		"    vec2 at = (fTexture & 0x100) != 0 ? fract(fUv) : fUv;",
 		"    vec3 layer = vec3(at, float(id - 1));",
 		"    if (textureLod(textures, layer, 0.0).a < 1.0) discard;",
 		"    vec3 t = textureGrad(textures, layer, dFdx(fUv), dFdy(fUv)).rgb;",

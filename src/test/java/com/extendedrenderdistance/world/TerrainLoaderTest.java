@@ -34,7 +34,9 @@ public class TerrainLoaderTest
 				TerrainMesher.Built b = TerrainMesher.build(w, w.region(50, 50), step, new int[]{0x2b4a, 0x2b4a}, null);
 				assertTrue(b.count > 0);
 				assertEquals(0, b.count % 3);
-				assertEquals(b.count * TerrainMesher.STRIDE, b.vertices.remaining());
+				assertEquals(b.vertexCount * TerrainMesher.STRIDE, b.vertices.remaining());
+				assertEquals(b.count * (b.shortIndices ? 2 : 4), b.indices.remaining());
+				System.out.println("terrain step " + step + ": " + b.count + " corners, " + b.vertexCount + " vertices");
 			}
 
 			ObjectMesher objects = new ObjectMesher(cache, new int[]{0x2b4a, 0x2b4a});
@@ -49,7 +51,8 @@ public class TerrainLoaderTest
 				{
 					long t = System.nanoTime();
 					TerrainMesher.Built b = objects.build(w.region(sq[0], sq[1]), d, null);
-					line.append(String.format(" %dk (%d ms)", b.count / 3000, (System.nanoTime() - t) / 1_000_000));
+					line.append(String.format(" %dk triangles, %dk vertices (%d ms)", b.count / 3000, b.vertexCount / 1000,
+						(System.nanoTime() - t) / 1_000_000));
 					assertEquals(0, b.count % 3);
 					assertTrue(b.count <= last);
 					last = b.count;

@@ -240,7 +240,7 @@ public final class ObjectMesher
 		}
 		if (sink.count == 0)
 			min = max = 0;
-		return new TerrainMesher.Built(r, 0, sink.finish(), sink.count, min, max);
+		return sink.build(r, 0, min, max);
 	}
 
 	/**

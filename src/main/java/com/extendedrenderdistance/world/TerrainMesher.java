@@ -26,21 +26,32 @@ public final class TerrainMesher
 	{
 	}
 
-	/** A built mesh: vertex bytes, vertex count and the height range (client heights). */
+	/**
+	 * A built mesh: its distinct vertices, the triangle corners' indices into them (16-bit when they fit), and the
+	 * height range (client heights).
+	 */
 	public static final class Built
 	{
 		public final WorldTerrain.Region region;
 		public final int step;
 		public final ByteBuffer vertices;
+		public final int vertexCount;
+		public final ByteBuffer indices;
+		/** Triangle corners: three per triangle. */
 		public final int count;
+		public final boolean shortIndices;
 		public final int minHeight, maxHeight;
 
-		public Built(WorldTerrain.Region region, int step, ByteBuffer vertices, int count, int minHeight, int maxHeight)
+		public Built(WorldTerrain.Region region, int step, ByteBuffer vertices, int vertexCount, ByteBuffer indices,
+			int count, boolean shortIndices, int minHeight, int maxHeight)
 		{
 			this.region = region;
 			this.step = step;
 			this.vertices = vertices;
+			this.vertexCount = vertexCount;
+			this.indices = indices;
 			this.count = count;
+			this.shortIndices = shortIndices;
 			this.minHeight = minHeight;
 			this.maxHeight = maxHeight;
 		}
@@ -104,7 +115,7 @@ public final class TerrainMesher
 			skirt(sink, h, lit, quadColour, n, t, drop, k, 0, k + 1, 0, k, 0);
 			skirt(sink, h, lit, quadColour, n, t, drop, k, n, k + 1, n, k, n - 1);
 		}
-		return new Built(r, step, sink.finish(), sink.count, min, max);
+		return sink.build(r, step, min, max);
 	}
 
 	/** A coarse grid: each corner coloured by the tile there (or the quad's own colour where that tile is void). */
