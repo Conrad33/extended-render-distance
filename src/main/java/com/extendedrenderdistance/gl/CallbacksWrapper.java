@@ -25,7 +25,7 @@ import net.runelite.client.plugins.gpu.GpuPlugin;
  * that passes every call straight through, and after the top-level {@code preSceneDraw} (framebuffer bound and
  * cleared, sky drawn, scene not yet drawn) draws the far world; it also notes which zones the game draws.
  * <p>
- * Other plugins wrap the callbacks the same way (EV Bloat does), so whatever is installed is wrapped, wrappers
+ * Other plugins may wrap the callbacks the same way, so whatever is installed is wrapped, wrappers
  * included. The client calls {@code draw} every frame, so as long as our wrapper is being called it's in the chain
  * somewhere (maybe wrapped in turn) and is left alone; once it hasn't been for a while, something replaced it (the
  * GPU plugin restarted) and whatever is installed now is wrapped. Only while the GPU plugin is running, and 117 HD
