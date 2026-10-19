@@ -58,13 +58,12 @@ public interface ExtendedRenderDistanceConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "simplify",
-		name = "Simplify distant scenery",
-		description = "Simplify the shapes of far-away structures and scenery so they render faster. Turn off to see "
-			+ "them exactly (slower)",
+		keyName = "performanceMode",
+		name = "Performance Mode (Recommended)",
+		description = "Improves performance by simplifying distant geometry.",
 		position = 4
 	)
-	default boolean simplify()
+	default boolean performanceMode()
 	{
 		return true;
 	}

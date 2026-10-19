@@ -275,7 +275,7 @@ public class FarRenderer
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
-		boolean simplify = config.simplify();
+		boolean simplify = config.performanceMode();
 		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks
 			&& simplify == builtSimplify && terrain != null)
 			return;
