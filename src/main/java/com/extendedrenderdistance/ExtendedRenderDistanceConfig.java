@@ -34,15 +34,16 @@ public interface ExtendedRenderDistanceConfig extends Config
 		return 5000;
 	}
 
-	@Range(min = 0, max = 10000)
+	@Range(min = 0, max = 5000)
 	@ConfigItem(
-		keyName = "sceneryRange",
+		keyName = "sceneryDistance",
 		name = "Scenery distance",
-		description = "How far scenery (grass, rocks, etc) are rendered, in tiles.",
+		description = "How far scenery (grass, rocks, etc) are rendered, in tiles. (Performance heavy)",
 		position = 3
 	)
 	default int sceneryDistance()
 	{
-		return 320;
+		// the GPU plugin's farthest draw distance
+		return 184;
 	}
 }
