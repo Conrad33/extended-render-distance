@@ -15,7 +15,10 @@ import net.runelite.cache.models.VertexNormal;
  */
 final class ObjectModels
 {
-	/** A lit model, ready to place: per face its three corners and their colours (transparency in the top byte). */
+	/**
+	 * A lit model, ready to place: per face its three corners and their colours (packed HSL; the face's draw
+	 * priority in bits 16 to 23, its transparency in the top byte).
+	 */
 	static final class Lit
 	{
 		final float[] corners;
@@ -193,8 +196,9 @@ final class ObjectModels
 	}
 
 	/**
-	 * The client's model lighting: three packed colours per face, transparency in the top byte, MIN_VALUE for a
-	 * face that isn't drawn. Textured faces take the texture's colour, darkened by the light.
+	 * The client's model lighting: three packed colours per face, the face's draw priority in bits 16 to 23 (details
+	 * like windows sit over the faces they're on by priority), transparency in the top byte, MIN_VALUE for a face
+	 * that isn't drawn. Textured faces take the texture's colour, darkened by the light.
 	 */
 	private int[] light(ModelDefinition m, int ambient, int contrast)
 	{
@@ -208,6 +212,7 @@ final class ObjectModels
 			int type = m.faceRenderTypes == null ? 0 : m.faceRenderTypes[f] & 3;
 			int tex = m.faceTextures == null ? -1 : m.faceTextures[f];
 			int alpha = m.faceTransparencies == null ? 0 : m.faceTransparencies[f] & 0xff;
+			int priority = (m.faceRenderPriorities == null ? m.priority : m.faceRenderPriorities[f]) & 0x0f;
 			if (type == 2 || alpha >= 254)
 			{
 				out[f * 3] = Integer.MIN_VALUE;
@@ -220,7 +225,7 @@ final class ObjectModels
 				base = m.faceColors == null ? 0 : m.faceColors[f] & 0xffff;
 			if (type == 3)
 			{
-				out[f * 3] = out[f * 3 + 1] = out[f * 3 + 2] = alpha << 24 | 128;
+				out[f * 3] = out[f * 3 + 1] = out[f * 3 + 2] = alpha << 24 | priority << 16 | 128;
 				continue;
 			}
 			int[] v = {m.faceIndices1[f], m.faceIndices2[f], m.faceIndices3[f]};
@@ -228,7 +233,7 @@ final class ObjectModels
 			{
 				FaceNormal n = m.faceNormals == null ? null : m.faceNormals[f];
 				int l = n == null ? ambient : (ly * n.y + lz * n.z + lx * n.x) / (k / 2 + k) + ambient;
-				int c = alpha << 24 | shade(base, l);
+				int c = alpha << 24 | priority << 16 | shade(base, l);
 				out[f * 3] = out[f * 3 + 1] = out[f * 3 + 2] = c;
 				continue;
 			}
@@ -237,7 +242,7 @@ final class ObjectModels
 				VertexNormal n = m.vertexNormals[v[i]];
 				int l = n == null || n.magnitude == 0 ? ambient
 					: (ly * n.y + lz * n.z + lx * n.x) / (k * n.magnitude) + ambient;
-				out[f * 3 + i] = alpha << 24 | shade(base, l);
+				out[f * 3 + i] = alpha << 24 | priority << 16 | shade(base, l);
 			}
 		}
 		return out;

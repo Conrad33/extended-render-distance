@@ -63,8 +63,10 @@ final class Shaders
 		"}");
 
 	/**
-	 * Camera-relative positions (the client's axes, y down) with a packed colour; depth pushed back by depthScale
-	 * so the real scene wins ties; nothing inside the hole (the area the GPU plugin draws); hazed into the sky.
+	 * Camera-relative positions (the client's axes, y down) with a packed colour (draw priority in bits 16 to 23);
+	 * depth pushed back by depthScale so the real scene wins ties, and pulled forward a hair per priority level so a
+	 * detail (a window) wins over the face it lies on even where far simplification has flattened the two together;
+	 * nothing inside the hole (the area the GPU plugin draws); hazed into the sky.
 	 */
 	static final String FAR_VERT = String.join("\n",
 		"#version 330",
@@ -80,7 +82,7 @@ final class Shaders
 		"void main() {",
 		"  vec3 p = pos + offset;",
 		"  vec4 c = proj * vec4(p, 1.0);",
-		"  c.z *= depthScale;",
+		"  c.z *= depthScale * (1.0 + float(colour >> 16 & 255) * 0.0002);",
 		"  gl_Position = c;",
 		"  fColour = hslToRgb(colour & 65535, brightness);",
 		"  fPos = p;",
