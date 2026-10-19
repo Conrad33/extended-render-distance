@@ -2,22 +2,27 @@ package com.horizon.gl;
 
 import com.horizon.HorizonConfig;
 import com.horizon.world.ObjectMesher;
+import com.horizon.world.Reach;
 import com.horizon.world.TerrainMesher;
 import com.horizon.world.WorldCache;
+import java.util.concurrent.CompletableFuture;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
+import net.runelite.api.Player;
 import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
 import net.runelite.api.WorldView;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.config.ConfigManager;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
- * Draws the world beyond the normal view into the GPU plugin's frame, from the game cache: the ground out to the
+ * Draws the world beyond the normal view into the GPU plugin's frame, from the game cache, only ever the part that
+ * belongs with where the player is (the {@link Reach}: in a dungeon, that dungeon; in an instance, nothing): the ground out to the
  * view distance (levels of detail, hazed into the sky), all scenery out to the scenery distance and buildings and
  * tall things out to the building distance (each a {@link RegionLayer}).
  * <p>
@@ -47,6 +52,9 @@ public class FarRenderer
 	private volatile WorldCache world;
 	private WorldCache builtFor;
 	private int builtScenery = -1, builtLandmarks = -1;
+	/** The part of the map drawn, and the one being worked out for where the player is now. */
+	private Reach reach, builtReach;
+	private CompletableFuture<Reach> nextReach;
 	private RegionLayer terrain, scenery;
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
@@ -100,6 +108,9 @@ public class FarRenderer
 		}
 		if (texColours == null || texColours.length == 0)
 			texColours = textureColours();
+		WorldView wv = client.getTopLevelWorldView();
+		if (wv.isInstance() || !updateReach(w))
+			return;
 		layers(w);
 
 		int vpW = client.getViewportWidth(), vpH = client.getViewportHeight();
@@ -112,7 +123,6 @@ public class FarRenderer
 		Mat4.mul(proj, Mat4.rotateY(yaw));
 
 		// what the GPU plugin draws: the loaded scene, out to its draw distance from the camera
-		WorldView wv = client.getTopLevelWorldView();
 		int expanded = client.getExpandedMapLoading() * 8;
 		Integer gpuDistance = configManager.getConfiguration("gpu", "drawDistance", Integer.class);
 		int dd = Math.max(0, Math.min(GPU_MAX_DISTANCE, gpuDistance == null ? 25 : gpuDistance));
@@ -186,26 +196,54 @@ public class FarRenderer
 			glDisable(cap);
 	}
 
-	/** (Re)builds the layers when the world or the distances change. */
+	/**
+	 * Keeps the reach on where the player is: when they step out of it (into a dungeon, through a teleport), the
+	 * new one is worked out in the background. False while there's none for here yet (draw nothing meanwhile).
+	 */
+	private boolean updateReach(WorldCache w)
+	{
+		Player p = client.getLocalPlayer();
+		if (p == null)
+			return false;
+		WorldPoint at = p.getWorldLocation();
+		if (nextReach != null && nextReach.isDone())
+		{
+			reach = nextReach.getNow(null);
+			nextReach = null;
+		}
+		boolean here = reach != null && reach.has(at.getX(), at.getY());
+		if (!here && nextReach == null)
+		{
+			int x = at.getX(), y = at.getY();
+			nextReach = CompletableFuture.supplyAsync(() -> Reach.from(w.terrain, x, y));
+		}
+		return here;
+	}
+
+	/** (Re)builds the layers when the world, the reach or the distances change. */
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.landmarkDistance());
-		if (w == builtFor && sc == builtScenery && lm == builtLandmarks && terrain != null)
+		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks && terrain != null)
 			return;
-		if (terrain == null || w != builtFor)
+		Reach rc = reach;
+		if (terrain == null || w != builtFor || rc != builtReach)
 		{
 			if (terrain != null)
 				terrain.free();
 			int[] tex = texColours;
 			terrain = new RegionLayer("terrain", TERRAIN_RANGES, true, 1, 24, 12);
-			terrain.setWorld(w.terrain, (r, level) -> TerrainMesher.build(w.terrain, r, TERRAIN_STEPS[level], tex));
+			terrain.setFilter(r -> rc == null || rc.touches(r));
+			terrain.setWorld(w.terrain, (r, level) -> TerrainMesher.build(w.terrain, r, TERRAIN_STEPS[level], tex, rc));
 		}
 		if (scenery != null)
 			scenery.free();
 		ObjectMesher objects = new ObjectMesher(w, texColours);
 		scenery = new RegionLayer("scenery", new double[]{Math.max(1, sc), Math.max(2, lm)}, false, 3, 9, 4);
-		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, level == 1));
+		scenery.setFilter(r -> rc == null || rc.touches(r));
+		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, level == 1, rc));
 		builtFor = w;
+		builtReach = rc;
 		builtScenery = sc;
 		builtLandmarks = lm;
 	}

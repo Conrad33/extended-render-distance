@@ -26,7 +26,7 @@ import net.runelite.cache.region.Location;
 import net.runelite.cache.region.Region;
 
 /**
- * Reads the surface world out of the game cache on disk: every map square's plane 0 heights, underlays and
+ * Reads the whole map out of the game cache on disk (the surface and every dungeon): every map square's plane 0 heights, underlays and
  * overlays, how high the planes above sit, and its object placements (the maps index has one archive per region,
  * file 0 the terrain and file 1 the objects, unencrypted). Underlay colours are blended over the surrounding
  * 11 x 11 tiles the way the client does it, then packed to the client's 16-bit HSL. Slow (a few seconds): run it
@@ -35,8 +35,6 @@ import net.runelite.cache.region.Region;
 @Slf4j
 public final class TerrainLoader
 {
-	/** Map squares from this row north are dungeons and other underground areas, not the surface. */
-	private static final int SURFACE_ROWS = 100;
 	/** Tiles each side that underlay colours are blended over. */
 	private static final int BLEND = 5;
 
@@ -79,8 +77,6 @@ public final class TerrainLoader
 			{
 				int id = archive.getArchiveId();
 				int rx = id >> 8, ry = id & 255;
-				if (ry >= SURFACE_ROWS)
-					continue;
 				try
 				{
 					byte[] data = storage.loadArchive(archive);

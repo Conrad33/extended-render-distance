@@ -29,6 +29,19 @@ final class RegionLayer
 		TerrainMesher.Built build(WorldTerrain.Region region, int level);
 	}
 
+	/** Which squares to draw at all. */
+	interface Filter
+	{
+		boolean includes(WorldTerrain.Region region);
+	}
+
+	private Filter filter = r -> true;
+
+	void setFilter(Filter filter)
+	{
+		this.filter = filter;
+	}
+
 	private static final class Mesh
 	{
 		int vao, vbo, count, minHeight, maxHeight;
@@ -108,6 +121,8 @@ final class RegionLayer
 		List<Object[]> wanted = new ArrayList<>();
 		for (WorldTerrain.Region r : world.regions())
 		{
+			if (!filter.includes(r))
+				continue;
 			double dx = Math.max(0, Math.max(r.baseX() - camTileX, camTileX - (r.baseX() + 64)));
 			double dy = Math.max(0, Math.max(r.baseY() - camTileY, camTileY - (r.baseY() + 64)));
 			double dist = Math.sqrt(dx * dx + dy * dy);

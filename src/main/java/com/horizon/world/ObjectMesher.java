@@ -4,7 +4,7 @@ import net.runelite.cache.definitions.ObjectDefinition;
 
 /**
  * Builds one map square's scenery (every placement on every plane) into a single mesh, placed the way the client
- * places them: walls, wall decorations and ground decorations at the tile's centre, game objects and roofs at the
+ * places them (leaving out those outside the {@link Reach}): walls, wall decorations and ground decorations at the tile's centre, game objects and roofs at the
  * middle of their footprint (turned with the object), all standing on the average height of the corners under
  * them, and ground-hugging objects (fences, rugs) bent to follow the ground vertex by vertex. Vertices are relative
  * to the square's south-west corner, as for the terrain. Any thread.
@@ -27,7 +27,7 @@ public final class ObjectMesher
 		this.models = new ObjectModels(cache, textureColours);
 	}
 
-	public TerrainMesher.Built build(WorldTerrain.Region r, boolean landmarks)
+	public TerrainMesher.Built build(WorldTerrain.Region r, boolean landmarks, Reach reach)
 	{
 		WorldTerrain world = cache.terrain;
 		VertexSink sink = new VertexSink(1 << 14);
@@ -39,6 +39,8 @@ public final class ObjectMesher
 				continue;
 			int type = r.locType(i), rot = r.locOrientation(i), plane = r.locPlane(i);
 			int x = r.locX(i), y = r.locY(i);
+			if (reach != null && !reach.has(r.baseX() + x, r.baseY() + y))
+				continue;
 			boolean roof = type >= 12 && type <= 21;
 			boolean wall = type <= 3 || type == 9;
 			if (landmarks && (type >= 4 && type <= 8 || type == 22))

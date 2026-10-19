@@ -30,7 +30,7 @@ public class TerrainLoaderTest
 
 			for (int step : new int[]{1, 4, 16})
 			{
-				TerrainMesher.Built b = TerrainMesher.build(w, w.region(50, 50), step, new int[]{0x2b4a, 0x2b4a});
+				TerrainMesher.Built b = TerrainMesher.build(w, w.region(50, 50), step, new int[]{0x2b4a, 0x2b4a}, null);
 				assertTrue(b.count > 0);
 				assertEquals(0, b.count % 3);
 				assertEquals(b.count * TerrainMesher.STRIDE, b.vertices.remaining());
@@ -38,14 +38,27 @@ public class TerrainLoaderTest
 
 			ObjectMesher objects = new ObjectMesher(cache, new int[]{0x2b4a, 0x2b4a});
 			long t = System.nanoTime();
-			TerrainMesher.Built all = objects.build(lumbridge, false);
+			TerrainMesher.Built all = objects.build(lumbridge, false, null);
 			long ms = (System.nanoTime() - t) / 1_000_000;
-			TerrainMesher.Built far = objects.build(lumbridge, true);
+			TerrainMesher.Built far = objects.build(lumbridge, true, null);
 			System.out.println("lumbridge scenery: " + all.count / 3 + " triangles in " + ms + " ms, landmarks "
 				+ far.count / 3 + ", heights " + all.minHeight + ".." + all.maxHeight);
 			assertTrue(all.count > 10000);
 			assertEquals(0, all.count % 3);
 			assertTrue(far.count < all.count);
+
+			// from Lumbridge: Varrock and Falador, not the Stronghold of Security under Barbarian Village
+			t = System.nanoTime();
+			Reach surface = Reach.from(w, 3222, 3218);
+			System.out.println("surface reach in " + (System.nanoTime() - t) / 1_000_000 + " ms");
+			assertTrue(surface.has(3210, 3424));
+			assertTrue(surface.has(2964, 3380));
+			assertTrue(!surface.has(1860, 5240));
+			// from the Stronghold's first floor: not the surface, not the Edgeville dungeon
+			Reach stronghold = Reach.from(w, 1860, 5240);
+			assertTrue(stronghold.has(1870, 5230));
+			assertTrue(!stronghold.has(3222, 3218));
+			assertTrue(!stronghold.has(3097, 9868));
 		}
 	}
 }

@@ -3,7 +3,7 @@ package com.horizon.world;
 import java.nio.ByteBuffer;
 
 /**
- * Builds one map square's ground as triangles at a level of detail. At full detail (step 1) it follows the
+ * Builds one map square's ground as triangles at a level of detail, leaving out tiles outside the {@link Reach}. At full detail (step 1) it follows the
  * client: each tile's underlay colour is blended across its corners from the tiles there, overlays (paths, water,
  * floors) cover the whole tile or the part their shape says, and every corner is lit from the slope there (the
  * client's terrain light, from the west-south-west). Coarser levels sample a grid every {@code step} tiles with each
@@ -47,7 +47,7 @@ public final class TerrainMesher
 	/**
 	 * @param textureColours the client's colour for each texture (packed HSL), for textured tiles like water
 	 */
-	public static Built build(WorldTerrain world, WorldTerrain.Region r, int step, int[] textureColours)
+	public static Built build(WorldTerrain world, WorldTerrain.Region r, int step, int[] textureColours, Reach reach)
 	{
 		int n = 64 / step;
 		int bx = r.baseX(), by = r.baseY();
@@ -75,7 +75,8 @@ public final class TerrainMesher
 		for (int i = 0; i < n; i++)
 		{
 			for (int j = 0; j < n; j++)
-				quadColour[i * n + j] = resolve(world.colour(bx + i * step, by + j * step), textureColours);
+				quadColour[i * n + j] = reach != null && !reach.has(bx + i * step, by + j * step) ? WorldTerrain.VOID
+					: resolve(world.colour(bx + i * step, by + j * step), textureColours);
 		}
 
 		if (step == 1)
@@ -83,7 +84,10 @@ public final class TerrainMesher
 			for (int i = 0; i < 64; i++)
 			{
 				for (int j = 0; j < 64; j++)
-					tile(world, sink, bx, by, i, j, h, lit, textureColours);
+				{
+					if (reach == null || reach.has(bx + i, by + j))
+						tile(world, sink, bx, by, i, j, h, lit, textureColours);
+				}
 			}
 		}
 		else
