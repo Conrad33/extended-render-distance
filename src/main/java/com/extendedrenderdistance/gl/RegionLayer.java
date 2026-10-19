@@ -65,6 +65,16 @@ final class RegionLayer
 			stale = new boolean[levels];
 		}
 
+		boolean anyStale()
+		{
+			for (boolean s : stale)
+			{
+				if (s)
+					return true;
+			}
+			return false;
+		}
+
 		boolean wants(int level)
 		{
 			return (meshes[level] == null || stale[level]) && !pending[level];
@@ -88,6 +98,8 @@ final class RegionLayer
 	private boolean everywhere;
 	/** Levels a square can hold, whatever the layer's levels are switched to. */
 	private static final int MAX_LEVELS = 8;
+	/** Added to the distance of squares built out of view, so those in view come first. */
+	private static final double OUT_OF_VIEW = 1e9;
 	private final int maxInFlight, uploadsPerFrame;
 	private final ExecutorService workers;
 	private final ConcurrentLinkedQueue<Object[]> built = new ConcurrentLinkedQueue<>();
@@ -237,8 +249,10 @@ final class RegionLayer
 			float ox = (r.baseX() - baseX) * 128f - cx, oz = (r.baseY() - baseY) * 128f - cz;
 			Mesh any = best(slot, level);
 			boolean visible = any == null || visible(proj, ox, any.minHeight - cy, any.maxHeight - cy, oz);
-			if (visible && slot.wants(level))
-				wanted.add(new Object[]{r, level, dist, false});
+			// squares out of view are built only to replace meshes gone stale (after those in view), so a world update or
+			// a change of levels finishes, and lets go of the old meshes, without looking all round
+			if (slot.wants(level) && (visible || slot.anyStale()))
+				wanted.add(new Object[]{r, level, visible ? dist : dist + OUT_OF_VIEW, false});
 			// once the level wanted is built, the old ones stood in for it go; finer levels than needed go once
 			// well out of their range
 			boolean ready = slot.meshes[level] != null && !slot.stale[level];
@@ -274,17 +288,22 @@ final class RegionLayer
 		return everywhere ? ranges.length : -1;
 	}
 
-	/** The wanted level if built, else the nearest built one (coarser first). */
+	/**
+	 * The wanted level if built; else, while the square is being built again, what it showed before (its stale
+	 * meshes, so new levels built meanwhile don't change it twice); else the nearest built one (coarser first).
+	 */
 	private static Mesh best(Slot slot, int level)
 	{
 		if (slot.meshes[level] != null)
 			return slot.meshes[level];
+		boolean stale = slot.anyStale();
 		for (int d = 1; d < slot.meshes.length; d++)
 		{
-			if (level + d < slot.meshes.length && slot.meshes[level + d] != null)
-				return slot.meshes[level + d];
-			if (level - d >= 0 && slot.meshes[level - d] != null)
-				return slot.meshes[level - d];
+			int coarser = level + d, finer = level - d;
+			if (coarser < slot.meshes.length && slot.meshes[coarser] != null && (!stale || slot.stale[coarser]))
+				return slot.meshes[coarser];
+			if (finer >= 0 && slot.meshes[finer] != null && (!stale || slot.stale[finer]))
+				return slot.meshes[finer];
 		}
 		return null;
 	}
