@@ -1,5 +1,6 @@
 package com.horizon.gl;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -19,25 +20,22 @@ import net.runelite.api.hooks.DrawCallbacks;
  * cleared, sky drawn, scene not yet drawn) draws the far world.
  * <p>
  * Other plugins wrap the callbacks the same way (EV Bloat does), so whatever is installed is wrapped, wrappers
- * included, and the proxy is only put back if it stops being called (another plugin replaced it rather than
- * wrapping it), at most once a second, so two wrappers never fight over the slot. 117 HD has its own pipeline and
- * is left alone. Client thread.
+ * included; before wrapping, the chain of wrappers is followed (through their fields holding draw callbacks) and if
+ * our proxy is already somewhere in it, nothing is done, so two wrappers never pile up. 117 HD has its own pipeline
+ * and is left alone. Client thread.
  */
 @Slf4j
 @Singleton
 public class CallbacksWrapper
 {
-	/** Frames without our hook being called before the proxy is put back. */
-	private static final int LOST_AFTER = 10;
-	/** Frames between wraps at most. */
-	private static final int REWRAP_GAP = 60;
+	/** How deep a chain of wrappers is followed. */
+	private static final int MAX_CHAIN = 8;
 
 	private final Client client;
 	private final FarRenderer far;
 	private DrawCallbacks delegate;
 	private DrawCallbacks proxy;
 	private boolean drewThisFrame;
-	private long frame, lastCalled, lastWrapped = Long.MIN_VALUE / 2;
 	private String warnedAbout;
 
 	@Inject
@@ -47,14 +45,11 @@ public class CallbacksWrapper
 		this.far = far;
 	}
 
-	/** Wraps whatever is drawing, if our hook isn't being called. Call every frame. */
+	/** Wraps whatever is drawing, unless our proxy is already in the chain. Call every frame. */
 	public void check()
 	{
-		frame++;
 		DrawCallbacks current = client.getDrawCallbacks();
-		if (current == null || current == proxy)
-			return;
-		if (frame - lastCalled < LOST_AFTER || frame - lastWrapped < REWRAP_GAP)
+		if (current == null || current == proxy || (proxy != null && inChain(current, proxy, 0)))
 			return;
 		String name = current.getClass().getName();
 		if (name.startsWith("rs117."))
@@ -70,8 +65,37 @@ public class CallbacksWrapper
 		proxy = (DrawCallbacks) Proxy.newProxyInstance(DrawCallbacks.class.getClassLoader(),
 			new Class<?>[]{DrawCallbacks.class}, handler(current));
 		client.setDrawCallbacks(proxy);
-		lastWrapped = frame;
 		log.debug("Horizon: wrapped {}", name);
+	}
+
+	/** Whether {@code target} is {@code c} or wraps it, following fields that hold draw callbacks. */
+	private static boolean inChain(Object c, Object target, int depth)
+	{
+		if (c == target)
+			return true;
+		if (c == null || depth >= MAX_CHAIN || Proxy.isProxyClass(c.getClass()))
+			return false;
+		for (Class<?> k = c.getClass(); k != null && k != Object.class; k = k.getSuperclass())
+		{
+			if (k.getName().startsWith("net.runelite.client.plugins.gpu."))
+				return false;
+			for (Field f : k.getDeclaredFields())
+			{
+				if (!DrawCallbacks.class.isAssignableFrom(f.getType()))
+					continue;
+				try
+				{
+					f.setAccessible(true);
+					if (inChain(f.get(c), target, depth + 1))
+						return true;
+				}
+				catch (RuntimeException | IllegalAccessException e)
+				{
+					// can't look inside: treat as not ours
+				}
+			}
+		}
+		return false;
 	}
 
 	/** Takes the proxy out, if it's still the one installed. */
@@ -99,22 +123,21 @@ public class CallbacksWrapper
 			}
 			String name = method.getName();
 			if ("preSceneDraw".equals(name))
-				afterPreSceneDraw(args);
+				afterPreSceneDraw(method, args);
 			else if ("draw".equals(name) && args != null && args.length == 1)
 				drewThisFrame = false;
 			return result;
 		};
 	}
 
-	private void afterPreSceneDraw(Object[] args)
+	private void afterPreSceneDraw(Method method, Object[] args)
 	{
-		lastCalled = frame;
 		Scene scene = (Scene) args[0];
 		if (drewThisFrame || scene == null || scene.getWorldViewId() != WorldView.TOPLEVEL)
 			return;
 		drewThisFrame = true;
-		// (scene, [projection,] camera x, y, z, pitch, yaw, ...)
-		int i = args[1] instanceof Projection ? 2 : 1;
+		// (scene, [projection,] camera x, y, z, pitch, yaw, ...): the projection can be null, so go by the signature
+		int i = method.getParameterTypes()[1] == Projection.class ? 2 : 1;
 		try
 		{
 			far.draw((float) args[i], (float) args[i + 1], (float) args[i + 2], (float) args[i + 3], (float) args[i + 4]);
