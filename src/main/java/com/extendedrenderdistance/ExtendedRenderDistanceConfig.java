@@ -25,25 +25,25 @@ public interface ExtendedRenderDistanceConfig extends Config
 
 	@Range(min = 0, max = 10000)
 	@ConfigItem(
-		keyName = "sceneryRange",
-		name = "Scenery distance",
-		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles. Performance heavy",
-		position = 2
-	)
-	default int sceneryDistance()
-	{
-		return 320;
-	}
-
-	@Range(min = 0, max = 10000)
-	@ConfigItem(
 		keyName = "landmarkRange",
-		name = "Building distance",
-		description = "How far buildings (walls and roofs) and tall things (trees, towers) are drawn, in tiles",
-		position = 3
+		name = "Structure distance",
+		description = "How far buildings, trees and other big or tall things are drawn, in tiles",
+		position = 2
 	)
 	default int landmarkDistance()
 	{
 		return 1000;
+	}
+
+	@Range(min = 0, max = 10000)
+	@ConfigItem(
+		keyName = "sceneryRange",
+		name = "Scenery distance",
+		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles. Performance heavy",
+		position = 3
+	)
+	default int sceneryDistance()
+	{
+		return 320;
 	}
 }
