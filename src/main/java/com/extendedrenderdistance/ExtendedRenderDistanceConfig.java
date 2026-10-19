@@ -50,7 +50,8 @@ public interface ExtendedRenderDistanceConfig extends Config
 		keyName = "simplification",
 		name = "Simplification",
 		description = "How far-away scenery is simplified to keep it fast. Size-aware keeps big things (pyramids, "
-			+ "castles) smooth; Uniform treats everything alike; None doesn't simplify at all (slowest)",
+			+ "castles) smooth; Size-aware, sealed also closes the small gaps between their pieces; Uniform treats "
+			+ "everything alike; None doesn't simplify at all (slowest)",
 		position = 4
 	)
 	default Simplification simplification()

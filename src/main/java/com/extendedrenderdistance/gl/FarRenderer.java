@@ -300,7 +300,8 @@ public class FarRenderer
 		for (int i = 0; i < detail.length; i++)
 		{
 			detail[i] = new ObjectMesher.Detail(i == 0, i >= 2, simplify == Simplification.NONE ? 0 : SCENERY_CELLS[i],
-				simplify == Simplification.SIZE_AWARE);
+				simplify == Simplification.SIZE_AWARE || simplify == Simplification.SIZE_AWARE_SEALED,
+				simplify == Simplification.SIZE_AWARE_SEALED);
 		}
 		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, detail[level], rc));
 		builtFor = w;

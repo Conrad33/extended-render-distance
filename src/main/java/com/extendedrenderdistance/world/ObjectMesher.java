@@ -36,13 +36,21 @@ public final class ObjectMesher
 		final int cell;
 		/** Whether big objects get a finer grid, in proportion to their size (see {@link #cellFor}). */
 		final boolean sizeAware;
+		/** Whether the grid is chosen once for the whole square, for its biggest object (so pieces meet exactly). */
+		final boolean sealed;
 
 		public Detail(boolean decorations, boolean landmarksOnly, int cell, boolean sizeAware)
+		{
+			this(decorations, landmarksOnly, cell, sizeAware, false);
+		}
+
+		public Detail(boolean decorations, boolean landmarksOnly, int cell, boolean sizeAware, boolean sealed)
 		{
 			this.decorations = decorations;
 			this.landmarksOnly = landmarksOnly;
 			this.cell = cell;
 			this.sizeAware = sizeAware;
+			this.sealed = sealed;
 		}
 
 		/**
@@ -76,6 +84,8 @@ public final class ObjectMesher
 		VertexSink sink = new VertexSink(1 << 14);
 		boolean landmarks = detail.landmarksOnly;
 		java.util.HashSet<Long> seen = detail.cell > 0 ? new java.util.HashSet<>() : null;
+		// sealed: one grid for the whole square, fine enough for the biggest object in it
+		float squareCell = detail.sealed ? detail.cellFor(biggest(r, detail, reach)) : -1;
 		float[] tri = new float[9];
 		int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
 		for (int i = 0; i < r.locCount(); i++)
@@ -144,7 +154,7 @@ public final class ObjectMesher
 					&& m.top + (world.height(wx, wy, 0, r) - cy) < LANDMARK_HEIGHT)
 					continue;
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
-				float cell = detail.cellFor(m.extent);
+				float cell = squareCell >= 0 ? squareCell : detail.cellFor(m.extent);
 				float[] c = m.corners;
 				for (int f = 0; f < m.faces; f++)
 				{
@@ -300,6 +310,28 @@ public final class ObjectMesher
 		// the grid too: triangles snapped to different grids aren't the same
 		return k[0] * 0x9E3779B97F4A7C15L ^ Long.rotateLeft(k[1] * 0xC2B2AE3D27D4EB4FL, 21) ^ Long.rotateLeft(k[2], 42)
 			^ (long) Float.floatToIntBits(cell) * 0x165667B19E3779F9L;
+	}
+
+	/** The biggest model (local units across) in the square that this detail level draws. */
+	private float biggest(WorldTerrain.Region r, Detail detail, Reach reach)
+	{
+		float biggest = 0;
+		for (int i = 0; i < r.locCount(); i++)
+		{
+			int type = r.locType(i);
+			if (!detail.decorations && (type >= 4 && type <= 8 || type == 22))
+				continue;
+			if (reach != null && !reach.has(r.baseX() + r.locX(i), r.baseY() + r.locY(i)))
+				continue;
+			ObjectDefinition d = resolve(cache.object(r.locId(i)));
+			if (d == null)
+				continue;
+			int modelType = type == 11 ? 10 : type >= 4 && type <= 8 ? 4 : type == 2 ? 2 : type;
+			ObjectModels.Lit m = models.get(d, modelType, r.locOrientation(i));
+			if (m != null)
+				biggest = Math.max(biggest, m.extent);
+		}
+		return biggest;
 	}
 
 	/** An object that changes with the player's state shows its default form. */
