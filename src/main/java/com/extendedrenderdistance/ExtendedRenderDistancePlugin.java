@@ -29,18 +29,22 @@ public class ExtendedRenderDistancePlugin extends Plugin
 	private FarRenderer farRenderer;
 	@Inject
 	private CallbacksWrapper wrapper;
+	@Inject
+	private SpinnerClamp spinnerClamp;
 
 	@Override
 	protected void startUp()
 	{
 		// read the world from the game cache in the background
 		worldData.whenLoaded(farRenderer::setWorld);
+		javax.swing.SwingUtilities.invokeLater(spinnerClamp::install);
 	}
 
 	@Override
 	protected void shutDown()
 	{
 		clientThread.invoke(wrapper::unwrap);
+		javax.swing.SwingUtilities.invokeLater(spinnerClamp::uninstall);
 	}
 
 	@Subscribe

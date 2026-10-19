@@ -26,7 +26,7 @@ public interface ExtendedRenderDistanceConfig extends Config
 	@ConfigItem(
 		keyName = "sceneryRange",
 		name = "Scenery distance",
-		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles",
+		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles. Performance heavy",
 		position = 2
 	)
 	default int sceneryDistance()
