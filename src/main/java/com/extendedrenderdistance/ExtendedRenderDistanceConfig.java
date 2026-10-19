@@ -10,51 +10,39 @@ public interface ExtendedRenderDistanceConfig extends Config
 {
 	String GROUP = "extendedrenderdistance";
 
-	@Range(min = 200, max = 10000)
+	@Range(min = 200, max = 5000)
 	@ConfigItem(
-		keyName = "viewRange",
+		keyName = "terrainRange",
 		name = "Terrain distance",
-		description = "How far the ground is drawn, in tiles. Nothing is drawn beyond it",
+		description = "How far the terrain is rendered, in tiles.",
 		position = 1
 	)
 	default int viewDistance()
 	{
-		return 1500;
+		return 5000;
 	}
 
-	@Range(min = 0, max = 10000)
+	@Range(min = 0, max = 5000)
 	@ConfigItem(
-		keyName = "landmarkRange",
+		keyName = "structureRange",
 		name = "Structure distance",
-		description = "How far buildings, trees and other big or tall things are drawn, in tiles",
+		description = "How far structures (buildings, trees, etc) are rendered, in tiles.",
 		position = 2
 	)
 	default int landmarkDistance()
 	{
-		return 1000;
+		return 5000;
 	}
 
 	@Range(min = 0, max = 10000)
 	@ConfigItem(
 		keyName = "sceneryRange",
 		name = "Scenery distance",
-		description = "How far all scenery (fences, rocks, small objects) is drawn, in tiles. Performance heavy",
+		description = "How far scenery (grass, rocks, etc) are rendered, in tiles.",
 		position = 3
 	)
 	default int sceneryDistance()
 	{
 		return 320;
-	}
-
-	@Range(min = 0, max = 10000)
-	@ConfigItem(
-		keyName = "fogDepth",
-		name = "Fog depth",
-		description = "How many tiles before the terrain distance the fog starts. 0 for none",
-		position = 4
-	)
-	default int fogDepth()
-	{
-		return 1000;
 	}
 }

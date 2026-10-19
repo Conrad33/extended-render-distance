@@ -22,7 +22,7 @@ import static org.lwjgl.opengl.GL33C.*;
 /**
  * Draws the world beyond the normal view into the GPU plugin's frame, from the game cache, only ever the part that
  * belongs with where the player is (the {@link Reach}: in a dungeon, that dungeon; in an instance, nothing): the ground out to the
- * view distance (levels of detail, hazed into the sky), all scenery out to the scenery distance and buildings and
+ * terrain distance (levels of detail), all scenery out to the scenery distance and buildings and
  * tall things out to the building distance (each a {@link RegionLayer}).
  * <p>
  * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has cleared its
@@ -70,7 +70,7 @@ public class FarRenderer
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
 	private GLCapabilities caps;
-	private int program, uniProj, uniOffset, uniBrightness, uniFogColour, uniFogEnd, uniFogDepth, uniDepthScale;
+	private int program, uniProj, uniOffset, uniBrightness, uniViewEnd, uniDepthScale;
 	private int uniZones, uniZonesOrigin, maskTexture;
 	private int[] texColours;
 	private int fogProgram = -1, uniUseFog = -1;
@@ -158,11 +158,8 @@ public class FarRenderer
 			glUniformMatrix4fv(uniProj, false, proj);
 			TextureProvider tp = client.getTextureProvider();
 			glUniform1f(uniBrightness, tp == null ? 0.8f : (float) tp.getBrightness());
-			int sky = client.getSkyboxColor();
-			glUniform3f(uniFogColour, (sky >> 16 & 0xff) / 255f, (sky >> 8 & 0xff) / 255f, (sky & 0xff) / 255f);
-			// as the GPU plugin's fog: a straight fade into the sky over the last fog depth tiles before the edge
-			glUniform1f(uniFogEnd, config.viewDistance() * 128f);
-			glUniform1f(uniFogDepth, Math.min(config.fogDepth(), config.viewDistance()) * 128f);
+			// a clean edge at the terrain distance
+			glUniform1f(uniViewEnd, config.viewDistance() * 128f);
 			// what the game drew itself last frame, zone by zone; zone (0, 0) starts 5 zones before the scene's corner
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 			glBindTexture(GL_TEXTURE_2D, maskTexture);
@@ -310,9 +307,7 @@ public class FarRenderer
 		uniProj = glGetUniformLocation(program, "proj");
 		uniOffset = glGetUniformLocation(program, "offset");
 		uniBrightness = glGetUniformLocation(program, "brightness");
-		uniFogColour = glGetUniformLocation(program, "fogColour");
-		uniFogEnd = glGetUniformLocation(program, "fogEnd");
-		uniFogDepth = glGetUniformLocation(program, "fogDepth");
+		uniViewEnd = glGetUniformLocation(program, "viewEnd");
 		uniZones = glGetUniformLocation(program, "drawnZones");
 		uniZonesOrigin = glGetUniformLocation(program, "zonesOrigin");
 		maskTexture = glGenTextures();

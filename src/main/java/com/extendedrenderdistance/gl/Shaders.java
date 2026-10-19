@@ -68,7 +68,7 @@ final class Shaders
 	 * depth pushed back by depthScale so the real scene wins ties, and pulled forward a hair per priority level so a
 	 * detail (a window) wins over the face it lies on even where far simplification has flattened the two together;
 	 * nothing the game draws itself (scenery whose tile is in a zone the GPU plugin drew; ground well inside them,
-	 * a zone's overlap left so their edges meet); hazed into the sky.
+	 * a zone's overlap left so their edges meet); nothing past the terrain distance.
 	 */
 	static final String FAR_VERT = String.join("\n",
 		"#version 330",
@@ -104,9 +104,7 @@ final class Shaders
 		"flat in vec2 fAnchor;",
 		"uniform sampler2D drawnZones;",
 		"uniform vec2 zonesOrigin;",
-		"uniform vec3 fogColour;",
-		"uniform float fogEnd;",
-		"uniform float fogDepth;",
+		"uniform float viewEnd;",
 		"out vec4 frag;",
 		"bool drawn(vec2 p) {",
 		"  ivec2 c = ivec2(floor((p - zonesOrigin) / 1024.0));",
@@ -118,9 +116,7 @@ final class Shaders
 		"    if (drawn(fAnchor)) discard;",
 		"  } else if (drawn(fPos.xz) && drawn(fPos.xz + vec2(1024.0, 0.0)) && drawn(fPos.xz - vec2(1024.0, 0.0))",
 		"      && drawn(fPos.xz + vec2(0.0, 1024.0)) && drawn(fPos.xz - vec2(0.0, 1024.0))) discard;",
-		"  float d = length(fPos.xz);",
-		"  if (d > fogEnd) discard;",
-		"  float fog = fogDepth > 0.0 ? clamp((d - (fogEnd - fogDepth)) / fogDepth, 0.0, 1.0) : 0.0;",
-		"  frag = vec4(mix(fColour, fogColour, fog), 1.0);",
+		"  if (length(fPos.xz) > viewEnd) discard;",
+		"  frag = vec4(fColour, 1.0);",
 		"}");
 }
