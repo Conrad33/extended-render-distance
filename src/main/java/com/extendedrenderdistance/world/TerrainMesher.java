@@ -17,9 +17,6 @@ import java.nio.ByteBuffer;
 public final class TerrainMesher
 {
 	public static final int STRIDE = VertexSink.STRIDE;
-	/** The client's terrain light direction (x, y down, z), normalised in {@link #light}. */
-	private static final double LX = -50, LY = -10, LZ = -50;
-	private static final double LLEN = Math.sqrt(LX * LX + LY * LY + LZ * LZ);
 	private static final float TILE = 128f;
 
 	private TerrainMesher()
@@ -279,19 +276,24 @@ public final class TerrainMesher
 		sink.quad(x, y, z, new int[]{ca, cb, cb, ca});
 	}
 
-	/** Light at a corner as a lightness multiplier: about 0.8 on the flat, up to 1.3 on slopes facing the light. */
+	/**
+	 * Light at a corner as a lightness multiplier (the client's light over 128): the client's terrain light, in its
+	 * whole-number steps, from the height differences across 2 * step tiles and the light from (-50, -10, -50): 84 on
+	 * the flat.
+	 */
 	static double light(int dx, int dz, int step)
 	{
-		// the client's normal from the height differences across 2 * step tiles (y down)
-		double sx = dx, sz = dz, sy = -2.0 * step * 128;
-		double len = Math.sqrt(sx * sx + sy * sy + sz * sz);
-		double dot = (sx * LX + sy * LY + sz * LZ) / (len * LLEN);
-		return (96 + 74 * dot) / 128;
+		int span = 256 * step;
+		int len = (int) Math.sqrt((double) dx * dx + (double) span * span + (double) dz * dz);
+		int nx = (dx << 8) / len, ny = (span << 8) / len, nz = (dz << 8) / len;
+		// 213 is the light's length (71) times 768 over 256
+		return (96 + (-50 * nx - 10 * ny - 50 * nz) / 213) / 128.0;
 	}
 
+	/** The client's lightness times the light, rounded down as the client does. */
 	static int shade(int hsl, double light)
 	{
-		int l = (int) Math.round((hsl & 127) * light);
+		int l = (int) Math.floor((hsl & 127) * light + 1e-9);
 		return (hsl & ~127) | Math.max(2, Math.min(126, l));
 	}
 
@@ -301,7 +303,7 @@ public final class TerrainMesher
 	/** A textured colour code's texture, lit by the terrain light at the vertex. */
 	static int texture(int code, double light)
 	{
-		return VertexSink.texture(WorldTerrain.texture(code), (int) Math.round(127 * light));
+		return VertexSink.texture(WorldTerrain.texture(code), (int) Math.round(128 * light));
 	}
 
 	static int resolve(int code, int[] textureColours)
