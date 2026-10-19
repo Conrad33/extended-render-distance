@@ -38,10 +38,13 @@ public final class WorldTerrain
 		final byte[][] rise;
 		/** Object placements, see {@link #placement}. */
 		final long[] locs;
+		/** Floor tiles on the planes above the ground (upper floors, flat roofs, bridge decks), see {@link #floor}. */
+		final long[] floors;
 
 		Region(int rx, int ry, short[] height, char[] underlay, short[] overlay, byte[] shape, byte[][] rise,
-			long[] locs)
+			long[] locs, long[] floors)
 		{
+			this.floors = floors;
 			this.rx = rx;
 			this.ry = ry;
 			this.height = height;
@@ -86,6 +89,49 @@ public final class WorldTerrain
 		public int locY(int i)
 		{
 			return (int) locs[i] & 63;
+		}
+
+		public int floorCount()
+		{
+			return floors.length;
+		}
+
+		public int floorPlane(int i)
+		{
+			return (int) (floors[i] >>> 52) & 3;
+		}
+
+		public int floorX(int i)
+		{
+			return (int) (floors[i] >>> 46) & 63;
+		}
+
+		public int floorY(int i)
+		{
+			return (int) (floors[i] >>> 40) & 63;
+		}
+
+		public int floorPath(int i)
+		{
+			return (int) (floors[i] >>> 34) & 63;
+		}
+
+		public int floorRotation(int i)
+		{
+			return (int) (floors[i] >>> 32) & 3;
+		}
+
+		/** The overlay id, 0 for none. */
+		public int floorOverlay(int i)
+		{
+			return (int) (floors[i] >>> 16) & 0xffff;
+		}
+
+		/** The underlay's colour (packed HSL), or VOID. */
+		public int floorUnderlay(int i)
+		{
+			int c = (int) floors[i] & 0xffff;
+			return c == NO_UNDERLAY ? VOID : c;
 		}
 
 		public int baseX()
@@ -205,6 +251,19 @@ public final class WorldTerrain
 		for (int p = 1; p <= plane; p++)
 			h -= (r.rise[p - 1][x << 6 | y] & 0xff) * 8;
 		return h;
+	}
+
+	/** Packs an upper floor tile: plane, tile within the square, overlay path and rotation and id, underlay colour. */
+	static long floor(int plane, int x, int y, int path, int rotation, int overlay, int underlayColour)
+	{
+		return (long) (plane & 3) << 52 | (long) (x & 63) << 46 | (long) (y & 63) << 40 | (long) (path & 63) << 34
+			| (long) (rotation & 3) << 32 | (long) (overlay & 0xffff) << 16 | packUnderlay(underlayColour);
+	}
+
+	/** An overlay id's colour code (VOID, HOLE, a colour or a texture marker). */
+	public int overlayColour(int id)
+	{
+		return id <= 0 || id >= overlayColours.length ? VOID : overlayColours[id];
 	}
 
 	/** Packs a placement: object id, type (0 to 22), orientation, plane and tile within the square. */

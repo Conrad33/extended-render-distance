@@ -10,8 +10,8 @@ import net.runelite.cache.definitions.ObjectDefinition;
  * to the square's south-west corner, as for the terrain. Any thread.
  * <p>
  * Further away, a mesh gets simpler ({@link Detail}): decorations on walls and the ground go, then everything but
- * buildings (walls and roofs) and objects standing at least {@link #LANDMARK_HEIGHT} high (trees, towers,
- * windmills), and every corner is snapped to a grid, so small details collapse to nothing and the triangles they
+ * buildings (walls, roofs and whatever stands on their upper floors), big objects (2 x 2 tiles or more) and
+ * objects reaching at least {@link #LANDMARK_HEIGHT} above the ground (trees, towers, windmills), and every corner is snapped to a grid, so small details collapse to nothing and the triangles they
  * leave behind (and exact repeats) are dropped.
  */
 public final class ObjectMesher
@@ -40,11 +40,13 @@ public final class ObjectMesher
 
 	private final WorldCache cache;
 	private final ObjectModels models;
+	private final int[] textureColours;
 
 	public ObjectMesher(WorldCache cache, int[] textureColours)
 	{
 		this.cache = cache;
 		this.models = new ObjectModels(cache, textureColours);
+		this.textureColours = textureColours;
 	}
 
 	public TerrainMesher.Built build(WorldTerrain.Region r, Detail detail, Reach reach)
@@ -115,7 +117,10 @@ public final class ObjectMesher
 					m = models.get(d, 10, part[1]);
 				if (m == null)
 					continue;
-				if (landmarks && !roof && !wall && m.top < LANDMARK_HEIGHT)
+				// stands out from afar: part of a building, big, or reaching high above the ground (counting the floor
+				// it stands on: a flat canopy up on a building is still a roof)
+				if (landmarks && !roof && !wall && plane == 0 && sx * sy < 4
+					&& m.top + (world.height(wx, wy, 0, r) - cy) < LANDMARK_HEIGHT)
 					continue;
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
 				float[] c = m.corners;
@@ -154,9 +159,84 @@ public final class ObjectMesher
 				}
 			}
 		}
+		// upper floors and flat roofs, at every level of detail (a building without them is hollow from above)
+		for (int i = 0; i < r.floorCount(); i++)
+		{
+			int wx = r.baseX() + r.floorX(i), wy = r.baseY() + r.floorY(i);
+			if (reach != null && !reach.has(wx, wy))
+				continue;
+			int top = floor(world, sink, r, i, wx, wy);
+			min = Math.min(min, top);
+			max = Math.max(max, top);
+		}
 		if (sink.count == 0)
 			min = max = 0;
 		return new TerrainMesher.Built(r, 0, sink.finish(), sink.count, min, max);
+	}
+
+	/**
+	 * One upper floor tile: the overlay over all or part of it (as its shape says), the underlay under the rest,
+	 * lit from the slope like the ground. Both sides are drawn (seen from above it's a roof, from below a ceiling).
+	 * Returns its height.
+	 */
+	private int floor(WorldTerrain world, VertexSink sink, WorldTerrain.Region r, int i, int wx, int wy)
+	{
+		int plane = r.floorPlane(i);
+		int under = r.floorUnderlay(i);
+		int over = TerrainMesher.resolve(world.overlayColour(r.floorOverlay(i)), textureColours);
+		boolean hole = world.overlayColour(r.floorOverlay(i)) == WorldTerrain.HOLE;
+		int path = r.floorPath(i);
+		float[] ch = new float[4];
+		double[] cl = new double[4];
+		int[][] corner = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+		for (int k = 0; k < 4; k++)
+		{
+			int cx = wx + corner[k][0], cy = wy + corner[k][1];
+			ch[k] = world.height(cx, cy, plane, r);
+			int dx = world.height(cx + 1, cy, plane, r) - world.height(cx - 1, cy, plane, r);
+			int dz = world.height(cx, cy + 1, plane, r) - world.height(cx, cy - 1, plane, r);
+			cl[k] = TerrainMesher.light(dx, dz, 1);
+		}
+		float x0 = (wx - r.baseX()) * 128f, z0 = (wy - r.baseY()) * 128f;
+		boolean[] mask = over == WorldTerrain.VOID && !hole ? null
+			: path == 0 ? null : TileShapes.mask(path, r.floorRotation(i));
+		for (int cell = 0; cell < (mask == null ? 1 : 16); cell++)
+		{
+			int row = cell / 4, col = cell % 4;
+			boolean overlay = mask == null ? over != WorldTerrain.VOID || hole : mask[cell];
+			int colour = overlay ? (hole ? WorldTerrain.VOID : over) : under;
+			if (colour == WorldTerrain.VOID)
+				continue;
+			double u0 = mask == null ? 0 : col / 4.0, u1 = mask == null ? 1 : (col + 1) / 4.0;
+			double v0 = mask == null ? 0 : 1 - (row + 1) / 4.0, v1 = mask == null ? 1 : 1 - row / 4.0;
+			double[] us = {u0, u1, u1, u0}, vs = {v0, v0, v1, v1};
+			float[] x = new float[4], y = new float[4], z = new float[4];
+			int[] c = new int[4];
+			for (int k = 0; k < 4; k++)
+			{
+				x[k] = x0 + (float) (us[k] * 128);
+				z[k] = z0 + (float) (vs[k] * 128);
+				y[k] = (float) bilinear(ch, us[k], vs[k]);
+				c[k] = TerrainMesher.shade(colour, bilinear(cl, us[k], vs[k]));
+			}
+			sink.quad(x, y, z, c);
+			// and the other side
+			sink.quad(new float[]{x[0], x[3], x[2], x[1]}, new float[]{y[0], y[3], y[2], y[1]},
+				new float[]{z[0], z[3], z[2], z[1]}, new int[]{c[0], c[3], c[2], c[1]});
+		}
+		return (int) ch[0];
+	}
+
+	private static double bilinear(float[] c, double u, double v)
+	{
+		double south = c[0] + (c[1] - c[0]) * u, north = c[3] + (c[2] - c[3]) * u;
+		return south + (north - south) * v;
+	}
+
+	private static double bilinear(double[] c, double u, double v)
+	{
+		double south = c[0] + (c[1] - c[0]) * u, north = c[3] + (c[2] - c[3]) * u;
+		return south + (north - south) * v;
 	}
 
 	/** Whether two of a snapped triangle's corners landed on the same point. */

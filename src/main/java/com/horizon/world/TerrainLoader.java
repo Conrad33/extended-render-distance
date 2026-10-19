@@ -48,6 +48,7 @@ public final class TerrainLoader
 		final byte[] shape = new byte[64 * 64];
 		final byte[][] rise = new byte[3][64 * 64];
 		long[] locs = new long[0];
+		long[] floors = new long[0];
 
 		Raw(int rx, int ry)
 		{
@@ -104,6 +105,7 @@ public final class TerrainLoader
 								raw.rise[z - 1][i] = (byte) ((region.getTileHeight(z - 1, x, y) - region.getTileHeight(z, x, y)) / 8);
 						}
 					}
+					raw.floors = floors(region, underlays);
 					FSFile objects = files.findFile(1);
 					if (objects != null)
 					{
@@ -136,10 +138,43 @@ public final class TerrainLoader
 		List<WorldTerrain.Region> out = new ArrayList<>(raws.size());
 		for (Raw raw : raws.values())
 			out.add(new WorldTerrain.Region(raw.rx, raw.ry, raw.height, blend(raw, raws, underlays), raw.overlay,
-				raw.shape, raw.rise, raw.locs));
+				raw.shape, raw.rise, raw.locs, raw.floors));
 		log.info("Horizon: read {} map squares of terrain and objects in {} ms", out.size(),
 			(System.nanoTime() - start) / 1_000_000);
 		return new WorldTerrain(out, overlayColours(overlays));
+	}
+
+	/** Tiles flagged this way aren't drawn by the client. */
+	private static final int HIDDEN = 16;
+
+	/** The floor tiles on planes 1 to 3 (only buildings and bridges have any). */
+	private static long[] floors(Region region, UnderlayDefinition[] underlays)
+	{
+		long[] out = new long[64];
+		int n = 0;
+		for (int z = 1; z < 4; z++)
+		{
+			for (int x = 0; x < 64; x++)
+			{
+				for (int y = 0; y < 64; y++)
+				{
+					int u = region.getUnderlayId(z, x, y), o = region.getOverlayId(z, x, y);
+					if (u <= 0 && o <= 0 || (region.getTileSetting(z, x, y) & HIDDEN) != 0)
+						continue;
+					int under = WorldTerrain.VOID;
+					if (u > 0 && u - 1 < underlays.length && underlays[u - 1] != null)
+					{
+						UnderlayDefinition d = underlays[u - 1];
+						under = pack(d.getHue() * 256 / Math.max(1, d.getHueMultiplier()), d.getSaturation(), d.getLightness());
+					}
+					if (n == out.length)
+						out = java.util.Arrays.copyOf(out, n * 2);
+					out[n++] = WorldTerrain.floor(z, x, y, region.getOverlayPath(z, x, y), region.getOverlayRotation(z, x, y),
+						Math.max(0, o), under);
+				}
+			}
+		}
+		return java.util.Arrays.copyOf(out, n);
 	}
 
 	/** Colour code per overlay id (ids in the map are one more than the definition's). */

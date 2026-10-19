@@ -39,7 +39,7 @@ public class TerrainLoaderTest
 			ObjectMesher objects = new ObjectMesher(cache, new int[]{0x2b4a, 0x2b4a});
 			ObjectMesher.Detail[] details = {ObjectMesher.Detail.FULL, new ObjectMesher.Detail(false, false, 24),
 				new ObjectMesher.Detail(false, true, 64), new ObjectMesher.Detail(false, true, 160)};
-			for (int[] sq : new int[][]{{50, 50}, {50, 53}, {46, 52}})
+			for (int[] sq : new int[][]{{50, 50}, {50, 53}, {46, 52}, {49, 54}})
 			{
 				StringBuilder line = new StringBuilder("square " + sq[0] + "," + sq[1] + ":");
 				int last = Integer.MAX_VALUE;
@@ -54,6 +54,18 @@ public class TerrainLoaderTest
 				}
 				System.out.println(line);
 			}
+			// the Grand Exchange's flat roof is floor tiles up on plane 3
+			WorldTerrain.Region ge = w.region(3164 >> 6, 3489 >> 6);
+			int roof = 0;
+			for (int i = 0; i < ge.floorCount(); i++)
+			{
+				if (ge.floorPlane(i) == 3 && Math.abs(ge.baseX() + ge.floorX(i) - 3164) < 10
+					&& Math.abs(ge.baseY() + ge.floorY(i) - 3489) < 10)
+					roof++;
+			}
+			System.out.println("grand exchange roof tiles: " + roof + " (all upper floor tiles in its square: "
+				+ ge.floorCount() + ")");
+			assertTrue(roof > 20);
 			long t;
 
 			// from Lumbridge: Varrock and Falador, not the Stronghold of Security under Barbarian Village
