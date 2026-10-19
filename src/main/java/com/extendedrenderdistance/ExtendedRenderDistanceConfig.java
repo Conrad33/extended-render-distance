@@ -14,8 +14,7 @@ public interface ExtendedRenderDistanceConfig extends Config
 	@ConfigItem(
 		keyName = "viewRange",
 		name = "Terrain distance",
-		description = "How far the ground is drawn, in tiles. Nothing is drawn beyond it, and the haze thickens "
-			+ "towards it",
+		description = "How far the ground is drawn, in tiles. Nothing is drawn beyond it",
 		position = 1
 	)
 	default int viewDistance()
@@ -45,5 +44,17 @@ public interface ExtendedRenderDistanceConfig extends Config
 	default int sceneryDistance()
 	{
 		return 320;
+	}
+
+	@Range(min = 0, max = 10000)
+	@ConfigItem(
+		keyName = "fogDepth",
+		name = "Fog depth",
+		description = "How many tiles before the terrain distance the fog starts. 0 for none",
+		position = 4
+	)
+	default int fogDepth()
+	{
+		return 1000;
 	}
 }

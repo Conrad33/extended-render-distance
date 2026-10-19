@@ -105,7 +105,8 @@ final class Shaders
 		"uniform sampler2D drawnZones;",
 		"uniform vec2 zonesOrigin;",
 		"uniform vec3 fogColour;",
-		"uniform float fogDistance;",
+		"uniform float fogEnd;",
+		"uniform float fogDepth;",
 		"out vec4 frag;",
 		"bool drawn(vec2 p) {",
 		"  ivec2 c = ivec2(floor((p - zonesOrigin) / 1024.0));",
@@ -117,8 +118,9 @@ final class Shaders
 		"    if (drawn(fAnchor)) discard;",
 		"  } else if (drawn(fPos.xz) && drawn(fPos.xz + vec2(1024.0, 0.0)) && drawn(fPos.xz - vec2(1024.0, 0.0))",
 		"      && drawn(fPos.xz + vec2(0.0, 1024.0)) && drawn(fPos.xz - vec2(0.0, 1024.0))) discard;",
-		"  float d = length(fPos.xz) / fogDistance;",
-		"  float fog = 1.0 - exp(-d * d);",
+		"  float d = length(fPos.xz);",
+		"  if (d > fogEnd) discard;",
+		"  float fog = fogDepth > 0.0 ? clamp((d - (fogEnd - fogDepth)) / fogDepth, 0.0, 1.0) : 0.0;",
 		"  frag = vec4(mix(fColour, fogColour, fog), 1.0);",
 		"}");
 }

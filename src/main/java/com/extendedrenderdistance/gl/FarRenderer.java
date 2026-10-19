@@ -70,7 +70,7 @@ public class FarRenderer
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
 	private GLCapabilities caps;
-	private int program, uniProj, uniOffset, uniBrightness, uniFogColour, uniFogDistance, uniDepthScale;
+	private int program, uniProj, uniOffset, uniBrightness, uniFogColour, uniFogEnd, uniFogDepth, uniDepthScale;
 	private int uniZones, uniZonesOrigin, maskTexture;
 	private int[] texColours;
 	private int fogProgram = -1, uniUseFog = -1;
@@ -160,7 +160,9 @@ public class FarRenderer
 			glUniform1f(uniBrightness, tp == null ? 0.8f : (float) tp.getBrightness());
 			int sky = client.getSkyboxColor();
 			glUniform3f(uniFogColour, (sky >> 16 & 0xff) / 255f, (sky >> 8 & 0xff) / 255f, (sky & 0xff) / 255f);
-			glUniform1f(uniFogDistance, config.viewDistance() * 128f * 0.55f);
+			// as the GPU plugin's fog: a straight fade into the sky over the last fog depth tiles before the edge
+			glUniform1f(uniFogEnd, config.viewDistance() * 128f);
+			glUniform1f(uniFogDepth, Math.min(config.fogDepth(), config.viewDistance()) * 128f);
 			// what the game drew itself last frame, zone by zone; zone (0, 0) starts 5 zones before the scene's corner
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 			glBindTexture(GL_TEXTURE_2D, maskTexture);
@@ -309,7 +311,8 @@ public class FarRenderer
 		uniOffset = glGetUniformLocation(program, "offset");
 		uniBrightness = glGetUniformLocation(program, "brightness");
 		uniFogColour = glGetUniformLocation(program, "fogColour");
-		uniFogDistance = glGetUniformLocation(program, "fogDistance");
+		uniFogEnd = glGetUniformLocation(program, "fogEnd");
+		uniFogDepth = glGetUniformLocation(program, "fogDepth");
 		uniZones = glGetUniformLocation(program, "drawnZones");
 		uniZonesOrigin = glGetUniformLocation(program, "zonesOrigin");
 		maskTexture = glGenTextures();
