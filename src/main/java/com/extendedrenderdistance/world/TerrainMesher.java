@@ -10,7 +10,9 @@ import java.nio.ByteBuffer;
  * corner coloured by the tile there. Edges get skirts hanging down, so neighbours at a coarser level leave no cracks.
  * <p>
  * Vertices are relative to the square's south-west corner in the client's scene axes (x east, y down, z north; 128
- * to a tile): 3 floats then a packed colour int ({@link #STRIDE} bytes). Any thread.
+ * to a tile), as {@link VertexSink} lays them out ({@link #STRIDE} bytes). Textured overlays (water, paths) carry
+ * their texture, mapped once across each tile as the client maps it; coarse quads repeat theirs tile by tile. Any
+ * thread.
  */
 public final class TerrainMesher
 {
@@ -118,6 +120,8 @@ public final class TerrainMesher
 		float t = step * TILE;
 		float[] x = new float[4], y = new float[4], z = new float[4];
 		int[] c = new int[4];
+		float[] u = new float[4], v = new float[4];
+		int[] tex = new int[4];
 		for (int i = 0; i < n; i++)
 		{
 			for (int j = 0; j < n; j++)
@@ -125,6 +129,8 @@ public final class TerrainMesher
 				int own = quadColour[i * n + j];
 				if (own == WorldTerrain.VOID)
 					continue;
+				int code = world.colour(bx + i * step, by + j * step);
+				boolean textured = WorldTerrain.isTextured(code);
 				int[] corner = {i * (n + 1) + j, (i + 1) * (n + 1) + j, (i + 1) * (n + 1) + j + 1, i * (n + 1) + j + 1};
 				for (int k = 0; k < 4; k++)
 				{
@@ -134,8 +140,12 @@ public final class TerrainMesher
 					y[k] = h[ci];
 					int col = vc[ci] == WorldTerrain.VOID ? own : vc[ci];
 					c[k] = shade(col, lit[ci]);
+					// in tiles, so the texture repeats once a tile like the client's
+					u[k] = x[k] / TILE;
+					v[k] = z[k] / TILE;
+					tex[k] = textured ? texture(code, lit[ci]) | VertexSink.REPEAT : 0;
 				}
-				sink.quad(x, y, z, c);
+				sink.quad(x, y, z, c, u, v, tex);
 			}
 		}
 	}
@@ -169,6 +179,7 @@ public final class TerrainMesher
 		{
 			float[] x = {x0, x0 + TILE, x0 + TILE, x0}, z = {z0, z0, z0 + TILE, z0 + TILE};
 			int[] c = new int[4];
+			int[] tex = null;
 			if (over == WorldTerrain.VOID)
 			{
 				for (int k = 0; k < 4; k++)
@@ -179,18 +190,27 @@ public final class TerrainMesher
 				if (over == WorldTerrain.HOLE)
 					return;
 				int oc = resolve(over, textureColours);
+				if (WorldTerrain.isTextured(over))
+					tex = new int[4];
 				for (int k = 0; k < 4; k++)
+				{
 					c[k] = shade(oc, cl[k]);
+					if (tex != null)
+						tex[k] = texture(over, cl[k]);
+				}
 			}
-			sink.quad(x, ch, z, c);
+			sink.quad(x, ch, z, c, CORNER_U, CORNER_V, tex);
 			return;
 		}
 
 		// part overlay: sixteen cells, each overlay or underlay as the shape says
 		boolean[] mask = TileShapes.mask(path, world.overlayRotation(wx, wy));
 		int oc = over == WorldTerrain.HOLE ? WorldTerrain.VOID : resolve(over, textureColours);
+		boolean textured = WorldTerrain.isTextured(over);
 		float[] x = new float[4], y = new float[4], z = new float[4];
 		int[] c = new int[4];
+		float[] tu = new float[4], tv = new float[4];
+		int[] tex = new int[4];
 		for (int row = 0; row < 4; row++)
 		{
 			for (int col = 0; col < 4; col++)
@@ -209,8 +229,11 @@ public final class TerrainMesher
 					y[k] = (float) bilinear(ch[0], ch[1], ch[2], ch[3], u, v);
 					double l = bilinear(cl[0], cl[1], cl[2], cl[3], u, v);
 					c[k] = shade(overlay ? oc : blendHsl(cu, u, v), l);
+					tu[k] = (float) u;
+					tv[k] = (float) v;
+					tex[k] = overlay && textured ? texture(over, l) : 0;
 				}
-				sink.quad(x, y, z, c);
+				sink.quad(x, y, z, c, tu, tv, tex);
 			}
 		}
 	}
@@ -259,6 +282,15 @@ public final class TerrainMesher
 	{
 		int l = (int) Math.round((hsl & 127) * light);
 		return (hsl & ~127) | Math.max(2, Math.min(126, l));
+	}
+
+	/** A tile's corners' texture coordinates (south-west, south-east, north-east, north-west), as the client's. */
+	private static final float[] CORNER_U = {0, 1, 1, 0}, CORNER_V = {0, 0, 1, 1};
+
+	/** A textured colour code's texture, lit by the terrain light at the vertex. */
+	static int texture(int code, double light)
+	{
+		return VertexSink.texture(WorldTerrain.texture(code), (int) Math.round(127 * light));
 	}
 
 	static int resolve(int code, int[] textureColours)

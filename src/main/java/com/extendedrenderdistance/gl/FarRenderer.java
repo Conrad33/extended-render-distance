@@ -10,6 +10,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.Player;
 import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
@@ -80,6 +81,10 @@ public class FarRenderer
 	private GLCapabilities caps;
 	private int program, uniProj, uniOffset, uniBrightness, uniViewEnd, uniDepthScale;
 	private int uniZones, uniZonesOrigin, maskTexture;
+	private int uniTextures, uniTexturesOn, uniTextureEnd, uniTick, uniTextureAnimations;
+	/** The texture animations are set on the program. */
+	private boolean animationsSet;
+	private int tick;
 	private int[] texColours;
 	private int fogProgram = -1, uniUseFog = -1;
 	private boolean failed;
@@ -176,6 +181,7 @@ public class FarRenderer
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, DrawnZones.MASK, DrawnZones.MASK, GL_RED, GL_UNSIGNED_BYTE, mask);
 			java.lang.ref.Reference.reachabilityFence(mask);
 			glUniform1i(uniZones, MASK_UNIT);
+			textures();
 			float zone0 = -DrawnZones.OFFSET * 1024f;
 			glUniform2f(uniZonesOrigin, zone0 - camX, zone0 - camZ);
 			glUniform1f(uniDepthScale, 0.996f);
@@ -364,8 +370,64 @@ public class FarRenderer
 		return out;
 	}
 
+	/**
+	 * Points the program at the GPU plugin's textures (it keeps its texture array bound to unit 1), with its animations
+	 * and tick; flat colours while it has none.
+	 */
+	private void textures()
+	{
+		glActiveTexture(GL_TEXTURE1);
+		int array = glGetInteger(GL_TEXTURE_BINDING_2D_ARRAY);
+		glActiveTexture(GL_TEXTURE0 + MASK_UNIT);
+		TextureProvider tp = client.getTextureProvider();
+		if (!animationsSet && tp != null && tp.getTextures() != null && tp.getTextures().length > 0)
+		{
+			glUniform2fv(uniTextureAnimations, textureAnimations(tp.getTextures()));
+			animationsSet = true;
+		}
+		// as the GPU plugin: textures stand still while loading
+		if (client.getGameState() == GameState.LOGGED_IN)
+			tick = client.getGameCycle() & 127;
+		glUniform1i(uniTick, tick);
+		glUniform1i(uniTextures, 1);
+		glUniform1i(uniTexturesOn, array != 0 && animationsSet ? 1 : 0);
+		glUniform1f(uniTextureEnd, config.textureDistance() * 128f);
+	}
+
+	/** Each texture's scroll per tick (texels), as the GPU plugin works it out (BSD-2). */
+	private static float[] textureAnimations(Texture[] textures)
+	{
+		float[] out = new float[256 * 2];
+		for (int i = 0; i < Math.min(256, textures.length); i++)
+		{
+			Texture t = textures[i];
+			if (t == null)
+				continue;
+			float u = 0, v = 0;
+			switch (t.getAnimationDirection())
+			{
+				case 1:
+					v = -1;
+					break;
+				case 3:
+					v = 1;
+					break;
+				case 2:
+					u = -1;
+					break;
+				case 4:
+					u = 1;
+					break;
+			}
+			out[i * 2] = u * t.getAnimationSpeed();
+			out[i * 2 + 1] = v * t.getAnimationSpeed();
+		}
+		return out;
+	}
+
 	private void initProgram()
 	{
+		animationsSet = false;
 		program = Shaders.program(Shaders.FAR_VERT, Shaders.FAR_FRAG);
 		uniProj = glGetUniformLocation(program, "proj");
 		uniOffset = glGetUniformLocation(program, "offset");
@@ -384,6 +446,11 @@ public class FarRenderer
 		glBindTexture(GL_TEXTURE_2D, prev);
 		glActiveTexture(unit);
 		uniDepthScale = glGetUniformLocation(program, "depthScale");
+		uniTextures = glGetUniformLocation(program, "textures");
+		uniTexturesOn = glGetUniformLocation(program, "texturesOn");
+		uniTextureEnd = glGetUniformLocation(program, "textureEnd");
+		uniTick = glGetUniformLocation(program, "tick");
+		uniTextureAnimations = glGetUniformLocation(program, "textureAnimations");
 	}
 
 	/** The client's colour for each texture (packed HSL): water, lava and so on. */

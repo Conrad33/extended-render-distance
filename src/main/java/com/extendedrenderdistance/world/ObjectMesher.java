@@ -216,7 +216,12 @@ public final class ObjectMesher
 						continue;
 					for (int k = 0; k < 3; k++)
 					{
-						sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], stamp(m.colours[f * 3 + k], anchor));
+						int colour = stamp(m.colours[f * 3 + k], anchor);
+						if (m.textures == null || m.textures[f * 3 + k] == 0)
+							sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour);
+						else
+							sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour, m.uvs[f * 6 + k * 2],
+								m.uvs[f * 6 + k * 2 + 1], m.textures[f * 3 + k]);
 						min = Math.min(min, (int) tri[k * 3 + 1]);
 						max = Math.max(max, (int) tri[k * 3 + 1]);
 					}
@@ -247,7 +252,9 @@ public final class ObjectMesher
 	{
 		int plane = r.floorPlane(i);
 		int under = r.floorUnderlay(i);
-		int over = TerrainMesher.resolve(world.overlayColour(r.floorOverlay(i)), textureColours);
+		int overCode = world.overlayColour(r.floorOverlay(i));
+		int over = TerrainMesher.resolve(overCode, textureColours);
+		boolean textured = WorldTerrain.isTextured(overCode);
 		boolean hole = world.overlayColour(r.floorOverlay(i)) == WorldTerrain.HOLE;
 		int path = r.floorPath(i);
 		float[] ch = new float[4];
@@ -276,17 +283,26 @@ public final class ObjectMesher
 			double[] us = {u0, u1, u1, u0}, vs = {v0, v0, v1, v1};
 			float[] x = new float[4], y = new float[4], z = new float[4];
 			int[] c = new int[4];
+			float[] tu = new float[4], tv = new float[4];
+			int[] tex = overlay && textured ? new int[4] : null;
 			for (int k = 0; k < 4; k++)
 			{
 				x[k] = x0 + (float) (us[k] * 128);
 				z[k] = z0 + (float) (vs[k] * 128);
 				y[k] = (float) bilinear(ch, us[k], vs[k]);
-				c[k] = stamp(TerrainMesher.shade(colour, bilinear(cl, us[k], vs[k])), r.floorX(i) << 6 | r.floorY(i));
+				double light = bilinear(cl, us[k], vs[k]);
+				c[k] = stamp(TerrainMesher.shade(colour, light), r.floorX(i) << 6 | r.floorY(i));
+				tu[k] = (float) us[k];
+				tv[k] = (float) vs[k];
+				if (tex != null)
+					tex[k] = TerrainMesher.texture(overCode, light);
 			}
-			sink.quad(x, y, z, c);
+			sink.quad(x, y, z, c, tu, tv, tex);
 			// and the other side
 			sink.quad(new float[]{x[0], x[3], x[2], x[1]}, new float[]{y[0], y[3], y[2], y[1]},
-				new float[]{z[0], z[3], z[2], z[1]}, new int[]{c[0], c[3], c[2], c[1]});
+				new float[]{z[0], z[3], z[2], z[1]}, new int[]{c[0], c[3], c[2], c[1]},
+				new float[]{tu[0], tu[3], tu[2], tu[1]}, new float[]{tv[0], tv[3], tv[2], tv[1]},
+				tex == null ? null : new int[]{tex[0], tex[3], tex[2], tex[1]});
 		}
 		return (int) ch[0];
 	}

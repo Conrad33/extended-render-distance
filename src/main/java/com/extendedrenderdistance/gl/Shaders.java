@@ -64,7 +64,9 @@ final class Shaders
 
 	/**
 	 * Camera-relative positions (the client's axes, y down) with a packed colour (bits 0 to 15; draw priority in 16 to
-	 * 18; for scenery, the tile within its square of the object or floor it belongs to, plus one, in 19 to 31);
+	 * 18; for scenery, the tile within its square of the object or floor it belongs to, plus one, in 19 to 31), and
+	 * texture coordinates and a texture (its id plus one in bits 0 to 15, the light on it in 16 to 23, repeated tile
+	 * by tile when bit 24 is set) scrolled as the GPU plugin animates it;
 	 * depth pushed back by depthScale so the real scene wins ties, and pulled forward a hair per priority level so a
 	 * detail (a window) wins over the face it lies on even where far simplification has flattened the two together;
 	 * nothing the game draws itself (scenery whose tile is in a zone the GPU plugin drew; ground well inside them,
@@ -74,14 +76,21 @@ final class Shaders
 		"#version 330",
 		"layout(location = 0) in vec3 pos;",
 		"layout(location = 1) in int colour;",
+		"layout(location = 2) in vec2 uv;",
+		"layout(location = 3) in int texInfo;",
 		"uniform mat4 proj;",
 		"uniform vec3 offset;",
 		"uniform float brightness;",
 		"uniform float depthScale;",
+		"uniform int tick;",
+		"uniform vec2 textureAnimations[256];",
 		"out vec3 fColour;",
 		"out vec3 fPos;",
 		"flat out int fAnchored;",
 		"flat out vec2 fAnchor;",
+		"out vec2 fUv;",
+		"out float fTexLight;",
+		"flat out int fTexture;",
 		HSL_TO_RGB,
 		"void main() {",
 		"  vec3 p = pos + offset;",
@@ -94,6 +103,11 @@ final class Shaders
 		"  gl_Position = c;",
 		"  fColour = hslToRgb(colour & 65535, brightness);",
 		"  fPos = p;",
+		"  fTexture = texInfo & 0x100ffff;",
+		"  fTexLight = float(texInfo >> 16 & 255) / 127.0;",
+		"  int id = texInfo & 65535;",
+		"  fUv = uv;",
+		"  if (id > 0) fUv += float(tick) * textureAnimations[min(id - 1, 255)] / 128.0;",
 		"}");
 
 	static final String FAR_FRAG = String.join("\n",
@@ -102,9 +116,16 @@ final class Shaders
 		"in vec3 fPos;",
 		"flat in int fAnchored;",
 		"flat in vec2 fAnchor;",
+		"in vec2 fUv;",
+		"in float fTexLight;",
+		"flat in int fTexture;",
 		"uniform sampler2D drawnZones;",
 		"uniform vec2 zonesOrigin;",
 		"uniform float viewEnd;",
+		"uniform sampler2DArray textures;",
+		"uniform int texturesOn;",
+		"uniform float textureEnd;",
+		"uniform float brightness;",
 		"out vec4 frag;",
 		"bool drawn(vec2 p) {",
 		"  ivec2 c = ivec2(floor((p - zonesOrigin) / 1024.0));",
@@ -116,7 +137,19 @@ final class Shaders
 		"    if (drawn(fAnchor)) discard;",
 		"  } else if (drawn(fPos.xz) && drawn(fPos.xz + vec2(1024.0, 0.0)) && drawn(fPos.xz - vec2(1024.0, 0.0))",
 		"      && drawn(fPos.xz + vec2(0.0, 1024.0)) && drawn(fPos.xz - vec2(0.0, 1024.0))) discard;",
-		"  if (length(fPos.xz) > viewEnd) discard;",
-		"  frag = vec4(fColour, 1.0);",
+		"  float dist = length(fPos.xz);",
+		"  if (dist > viewEnd) discard;",
+		"  vec3 colour = fColour;",
+		"  int id = fTexture & 65535;",
+		"  if (texturesOn == 1 && id > 0 && dist < textureEnd) {",
+		// coarse ground repeats its texture every tile: the gradients of the unwrapped coordinates keep the mip level
+		"    vec2 at = (fTexture & 0x1000000) != 0 ? fract(fUv) : fUv;",
+		"    vec3 layer = vec3(at, float(id - 1));",
+		"    if (textureLod(textures, layer, 0.0).a < 1.0) discard;",
+		"    vec3 t = textureGrad(textures, layer, dFdx(fUv), dFdy(fUv)).rgb;",
+		"    vec3 lit = pow(t, vec3(brightness)) * fTexLight;",
+		"    colour = mix(lit, fColour, smoothstep(textureEnd * 0.85, textureEnd, dist));",
+		"  }",
+		"  frag = vec4(colour, 1.0);",
 		"}");
 }

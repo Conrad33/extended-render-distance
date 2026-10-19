@@ -17,20 +17,25 @@ final class ObjectModels
 {
 	/**
 	 * A lit model, ready to place: per face its three corners and their colours (packed HSL; the face's draw
-	 * priority in bits 16 to 23, its transparency in the top byte).
+	 * priority in bits 16 to 23, its transparency in the top byte), and for textured faces their corners' texture
+	 * coordinates and texture ({@link VertexSink#texture}; null when no face is textured).
 	 */
 	static final class Lit
 	{
 		final float[] corners;
 		final int[] colours;
+		final float[] uvs;
+		final int[] textures;
 		final int faces;
 		/** How far the model reaches above its origin (local units, up positive). */
 		final int top;
 		/** The model's largest size across (local units), on any axis. */
 		final float extent;
 
-		Lit(float[] corners, int[] colours, int faces, int top)
+		Lit(float[] corners, int[] colours, float[] uvs, int[] textures, int faces, int top)
 		{
+			this.uvs = uvs;
+			this.textures = textures;
 			float[] lo = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE};
 			float[] hi = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
 			for (int i = 0; i < faces * 9; i++)
@@ -46,7 +51,7 @@ final class ObjectModels
 		}
 	}
 
-	private static final Lit NONE = new Lit(new float[0], new int[0], 0, 0);
+	private static final Lit NONE = new Lit(new float[0], new int[0], null, null, 0, 0);
 	private static final int MAX_CACHED = 8000;
 
 	private final WorldCache cache;
@@ -152,6 +157,9 @@ final class ObjectModels
 		// each model built and lit on its own, then joined
 		float[][] parts = new float[ids.length][];
 		int[][] partColours = new int[ids.length][];
+		float[][] partUvs = new float[ids.length][];
+		int[][] partTextures = new int[ids.length][];
+		boolean textured = false;
 		int faces = 0, top = 0;
 		for (int p = 0; p < ids.length; p++)
 		{
@@ -159,8 +167,12 @@ final class ObjectModels
 			if (m == null || m.faceCount == 0)
 				continue;
 			transform(m, d, mirror, orientation & 3);
-			int[] colours = light(m, 64 + d.getAmbient(), 768 + d.getContrast());
+			int[] textures = m.faceTextures == null ? null : new int[m.faceCount * 3];
+			if (textures != null)
+				m.computeTextureUVCoordinates();
+			int[] colours = light(m, 64 + d.getAmbient(), 768 + d.getContrast(), textures);
 			float[] corners = new float[m.faceCount * 9];
+			float[] uvs = textures == null ? null : new float[m.faceCount * 6];
 			int kept = 0;
 			for (int f = 0; f < m.faceCount; f++)
 			{
@@ -174,17 +186,32 @@ final class ObjectModels
 					corners[kept * 9 + k * 3 + 2] = m.vertexZ[v[k]];
 					top = Math.max(top, -m.vertexY[v[k]]);
 					colours[kept * 3 + k] = colours[f * 3 + k];
+					if (textures != null)
+					{
+						textures[kept * 3 + k] = textures[f * 3 + k];
+						float[] fu = m.faceTextureUCoordinates[f], fv = m.faceTextureVCoordinates[f];
+						uvs[kept * 6 + k * 2] = fu == null ? 0 : fu[k];
+						uvs[kept * 6 + k * 2 + 1] = fv == null ? 0 : fv[k];
+					}
 				}
 				kept++;
 			}
 			parts[p] = java.util.Arrays.copyOf(corners, kept * 9);
 			partColours[p] = java.util.Arrays.copyOf(colours, kept * 3);
+			if (textures != null)
+			{
+				partUvs[p] = java.util.Arrays.copyOf(uvs, kept * 6);
+				partTextures[p] = java.util.Arrays.copyOf(textures, kept * 3);
+				textured = true;
+			}
 			faces += kept;
 		}
 		if (faces == 0)
 			return null;
 		float[] corners = new float[faces * 9];
 		int[] colours = new int[faces * 3];
+		float[] uvs = textured ? new float[faces * 6] : null;
+		int[] textures = textured ? new int[faces * 3] : null;
 		int at = 0;
 		for (int p = 0; p < parts.length; p++)
 		{
@@ -192,9 +219,14 @@ final class ObjectModels
 				continue;
 			System.arraycopy(parts[p], 0, corners, at * 9, parts[p].length);
 			System.arraycopy(partColours[p], 0, colours, at * 3, partColours[p].length);
+			if (partTextures[p] != null)
+			{
+				System.arraycopy(partUvs[p], 0, uvs, at * 6, partUvs[p].length);
+				System.arraycopy(partTextures[p], 0, textures, at * 3, partTextures[p].length);
+			}
 			at += parts[p].length / 9;
 		}
-		return new Lit(corners, colours, faces, top);
+		return new Lit(corners, colours, uvs, textures, faces, top);
 	}
 
 	/** Mirror, turn, recolour, retexture, scale and offset, as the client does before lighting. */
@@ -238,9 +270,11 @@ final class ObjectModels
 	/**
 	 * The client's model lighting: three packed colours per face, the face's draw priority in bits 16 to 23 (details
 	 * like windows sit over the faces they're on by priority), transparency in the top byte, MIN_VALUE for a face
-	 * that isn't drawn. Textured faces take the texture's colour, darkened by the light.
+	 * that isn't drawn. Textured faces take the texture's colour, darkened by the light, and when {@code textures}
+	 * isn't null, their corners' textures go in it ({@link VertexSink#texture}: lit by the light alone, as the client
+	 * lights a textured face).
 	 */
-	private int[] light(ModelDefinition m, int ambient, int contrast)
+	private int[] light(ModelDefinition m, int ambient, int contrast, int[] textures)
 	{
 		m.computeNormals();
 		int lx = -50, ly = -10, lz = -50;
@@ -266,6 +300,8 @@ final class ObjectModels
 			if (type == 3)
 			{
 				out[f * 3] = out[f * 3 + 1] = out[f * 3 + 2] = alpha << 24 | priority << 16 | 128;
+				if (tex >= 0 && textures != null)
+					textures[f * 3] = textures[f * 3 + 1] = textures[f * 3 + 2] = VertexSink.texture(tex, 126);
 				continue;
 			}
 			int[] v = {m.faceIndices1[f], m.faceIndices2[f], m.faceIndices3[f]};
@@ -275,6 +311,8 @@ final class ObjectModels
 				int l = n == null ? ambient : (ly * n.y + lz * n.z + lx * n.x) / (k / 2 + k) + ambient;
 				int c = alpha << 24 | priority << 16 | shade(base, l);
 				out[f * 3] = out[f * 3 + 1] = out[f * 3 + 2] = c;
+				if (tex >= 0 && textures != null)
+					textures[f * 3] = textures[f * 3 + 1] = textures[f * 3 + 2] = VertexSink.texture(tex, l);
 				continue;
 			}
 			for (int i = 0; i < 3; i++)
@@ -283,6 +321,8 @@ final class ObjectModels
 				int l = n == null || n.magnitude == 0 ? ambient
 					: (ly * n.y + lz * n.z + lx * n.x) / (k * n.magnitude) + ambient;
 				out[f * 3 + i] = alpha << 24 | priority << 16 | shade(base, l);
+				if (tex >= 0 && textures != null)
+					textures[f * 3 + i] = VertexSink.texture(tex, l);
 			}
 		}
 		return out;

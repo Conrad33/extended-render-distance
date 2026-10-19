@@ -17,6 +17,8 @@ public interface ExtendedRenderDistanceConfig extends Config
 	String TERRAIN_DESCRIPTION = "How far the terrain is rendered, in tiles.";
 	String STRUCTURE_NAME = "Structure distance";
 	String STRUCTURE_DESCRIPTION = "How far structures (buildings, trees, etc) are rendered, in tiles.";
+	String TEXTURE_NAME = "Texture distance";
+	String TEXTURE_DESCRIPTION = "How far textures (paths, water, roofs, etc) are rendered, in tiles.";
 	String SCENERY_NAME = "Scenery distance";
 	String SCENERY_DESCRIPTION = "How far scenery (grass, rocks, etc) are rendered, in tiles. (Performance heavy)";
 
@@ -46,22 +48,33 @@ public interface ExtendedRenderDistanceConfig extends Config
 
 	@Range(min = 0, max = MAX_DISTANCE)
 	@ConfigItem(
+		keyName = "textureDistance",
+		name = TEXTURE_NAME,
+		description = TEXTURE_DESCRIPTION,
+		position = 3
+	)
+	default int textureDistance()
+	{
+		return 200;
+	}
+
+	@Range(min = 0, max = MAX_DISTANCE)
+	@ConfigItem(
 		keyName = "sceneryDistance",
 		name = SCENERY_NAME,
 		description = SCENERY_DESCRIPTION,
-		position = 3
+		position = 4
 	)
 	default int sceneryDistance()
 	{
-		// the GPU plugin's farthest draw distance
-		return 184;
+		return 200;
 	}
 
 	@ConfigItem(
 		keyName = "performanceMode",
 		name = "Performance Mode (Recommended)",
 		description = "Improves performance by simplifying distant geometry.",
-		position = 4
+		position = 5
 	)
 	default boolean performanceMode()
 	{

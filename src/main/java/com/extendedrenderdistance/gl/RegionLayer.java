@@ -375,6 +375,10 @@ final class RegionLayer
 				glEnableVertexAttribArray(0);
 				glVertexAttribIPointer(1, 1, GL_INT, TerrainMesher.STRIDE, 12);
 				glEnableVertexAttribArray(1);
+				glVertexAttribPointer(2, 2, GL_FLOAT, false, TerrainMesher.STRIDE, 16);
+				glEnableVertexAttribArray(2);
+				glVertexAttribIPointer(3, 1, GL_INT, TerrainMesher.STRIDE, 24);
+				glEnableVertexAttribArray(3);
 				glBindVertexArray(0);
 				glBindBuffer(GL_ARRAY_BUFFER, 0);
 			}
