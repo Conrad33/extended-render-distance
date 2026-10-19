@@ -159,7 +159,7 @@ public class FarRenderer
 			TextureProvider tp = client.getTextureProvider();
 			glUniform1f(uniBrightness, tp == null ? 0.8f : (float) tp.getBrightness());
 			// a clean edge at the terrain distance
-			glUniform1f(uniViewEnd, config.viewDistance() * 128f);
+			glUniform1f(uniViewEnd, config.terrainDistance() * 128f);
 			// what the game drew itself last frame, zone by zone; zone (0, 0) starts 5 zones before the scene's corner
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 			glBindTexture(GL_TEXTURE_2D, maskTexture);
@@ -172,7 +172,7 @@ public class FarRenderer
 			glUniform2f(uniZonesOrigin, zone0 - camX, zone0 - camZ);
 			glUniform1f(uniDepthScale, 0.996f);
 
-			double view = config.viewDistance();
+			double view = config.terrainDistance();
 			// squares the game draws wholly aren't drawn at all
 			java.util.function.Predicate<com.extendedrenderdistance.world.WorldTerrain.Region> hole = r -> covered(r, baseX, baseY);
 			terrain.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
@@ -273,7 +273,7 @@ public class FarRenderer
 	/** (Re)builds the layers when the world, the reach or the distances change. */
 	private void layers(WorldCache w)
 	{
-		int sc = config.sceneryDistance(), lm = Math.max(sc, config.landmarkDistance());
+		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
 		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks && terrain != null)
 			return;
 		Reach rc = reach;

@@ -12,24 +12,24 @@ public interface ExtendedRenderDistanceConfig extends Config
 
 	@Range(min = 200, max = 5000)
 	@ConfigItem(
-		keyName = "terrainRange",
+		keyName = "terrainDistance",
 		name = "Terrain distance",
 		description = "How far the terrain is rendered, in tiles.",
 		position = 1
 	)
-	default int viewDistance()
+	default int terrainDistance()
 	{
 		return 5000;
 	}
 
 	@Range(min = 0, max = 5000)
 	@ConfigItem(
-		keyName = "structureRange",
+		keyName = "structureDistance",
 		name = "Structure distance",
 		description = "How far structures (buildings, trees, etc) are rendered, in tiles.",
 		position = 2
 	)
-	default int landmarkDistance()
+	default int structureDistance()
 	{
 		return 5000;
 	}
