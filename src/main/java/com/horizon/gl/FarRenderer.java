@@ -172,6 +172,9 @@ public class FarRenderer
 			// the hole in world tiles: squares wholly inside it aren't drawn at all
 			double[] hole = {baseX + (minX + m) / t, baseY + (minZ + m) / t, baseX + (maxX - m) / t, baseY + (maxZ - m) / t};
 			terrain.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
+			// models' back faces are hidden, as the game does: a wall's two sides never fight over the same pixels
+			// (simplifying far away can bring them together)
+			glEnable(GL_CULL_FACE);
 			scenery.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
 		}
 		finally

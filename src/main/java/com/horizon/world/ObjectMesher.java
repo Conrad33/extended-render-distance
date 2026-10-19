@@ -170,17 +170,22 @@ public final class ObjectMesher
 		return t[a] == t[b] && t[a + 1] == t[b + 1] && t[a + 2] == t[b + 2];
 	}
 
-	/** The same snapped triangle (any winding, any first corner) gives the same key. */
+	/**
+	 * The same snapped triangle facing the same way (any first corner) gives the same key; its back (the corners in
+	 * the other order) doesn't, as back faces aren't drawn.
+	 */
 	private static long key(float[] t, float cell)
 	{
-		long[] k = new long[3];
+		long[] c = new long[3];
 		for (int i = 0; i < 3; i++)
 		{
 			long x = Math.round(t[i * 3] / cell) & 0xfff, y = Math.round(t[i * 3 + 1] / cell) & 0xfff;
 			long z = Math.round(t[i * 3 + 2] / cell) & 0xfff;
-			k[i] = x << 24 | y << 12 | z;
+			c[i] = x << 24 | y << 12 | z;
 		}
-		java.util.Arrays.sort(k);
+		// start from the smallest corner, keeping the order round the triangle
+		int s = c[0] <= c[1] && c[0] <= c[2] ? 0 : c[1] <= c[2] ? 1 : 2;
+		long[] k = {c[s], c[(s + 1) % 3], c[(s + 2) % 3]};
 		return k[0] * 0x9E3779B97F4A7C15L ^ Long.rotateLeft(k[1] * 0xC2B2AE3D27D4EB4FL, 21) ^ Long.rotateLeft(k[2], 42);
 	}
 
