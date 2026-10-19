@@ -16,7 +16,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 @Slf4j
 @PluginDescriptor(
 	name = "Extended Render Distance",
-	description = "Draws the world past the normal render distance, out to the horizon, from the game cache. Needs the GPU plugin",
+	description = "Render all of Gielinor at once. (requires GPU plugin)",
 	tags = {"draw", "distance", "render", "view", "horizon", "far", "extended", "gpu"}
 )
 public class ExtendedRenderDistancePlugin extends Plugin
