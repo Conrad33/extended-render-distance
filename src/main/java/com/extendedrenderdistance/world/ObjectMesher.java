@@ -16,6 +16,11 @@ import net.runelite.cache.definitions.ObjectDefinition;
  */
 public final class ObjectMesher
 {
+	/** Objects up to this size across (local units, 2 tiles) get a level's whole grid when size-aware. */
+	static final float SIZE_REFERENCE = 256;
+	/** Grids finer than this (local units) aren't worth snapping to. */
+	static final float MIN_CELL = 8;
+
 	/** Local units (128 to a tile) a free-standing object must stand to be seen from afar. */
 	static final int LANDMARK_HEIGHT = 250;
 
@@ -23,18 +28,34 @@ public final class ObjectMesher
 	public static final class Detail
 	{
 		/** Everything, exactly. */
-		public static final Detail FULL = new Detail(true, false, 0);
+		public static final Detail FULL = new Detail(true, false, 0, false);
 
 		final boolean decorations;
 		final boolean landmarksOnly;
 		/** Grid corners are snapped to (local units), 0 for none. */
 		final int cell;
+		/** Whether big objects get a finer grid, in proportion to their size (see {@link #cellFor}). */
+		final boolean sizeAware;
 
-		public Detail(boolean decorations, boolean landmarksOnly, int cell)
+		public Detail(boolean decorations, boolean landmarksOnly, int cell, boolean sizeAware)
 		{
 			this.decorations = decorations;
 			this.landmarksOnly = landmarksOnly;
 			this.cell = cell;
+			this.sizeAware = sizeAware;
+		}
+
+		/**
+		 * The grid for a model {@code extent} units across: the level's own, or for something bigger than
+		 * {@link #SIZE_REFERENCE}, finer in proportion (a 10-tile-tall piece of the Necropolis pyramid snaps to a
+		 * fifth of the grid a market stall does); none once that's under {@link #MIN_CELL}.
+		 */
+		float cellFor(float extent)
+		{
+			if (cell <= 0 || !sizeAware || extent <= SIZE_REFERENCE)
+				return cell;
+			float c = cell * SIZE_REFERENCE / extent;
+			return c < MIN_CELL ? 0 : c;
 		}
 	}
 
@@ -54,8 +75,7 @@ public final class ObjectMesher
 		WorldTerrain world = cache.terrain;
 		VertexSink sink = new VertexSink(1 << 14);
 		boolean landmarks = detail.landmarksOnly;
-		float cell = detail.cell;
-		java.util.HashSet<Long> seen = cell > 0 ? new java.util.HashSet<>() : null;
+		java.util.HashSet<Long> seen = detail.cell > 0 ? new java.util.HashSet<>() : null;
 		float[] tri = new float[9];
 		int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
 		for (int i = 0; i < r.locCount(); i++)
@@ -124,6 +144,7 @@ public final class ObjectMesher
 					&& m.top + (world.height(wx, wy, 0, r) - cy) < LANDMARK_HEIGHT)
 					continue;
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
+				float cell = detail.cellFor(m.extent);
 				float[] c = m.corners;
 				for (int f = 0; f < m.faces; f++)
 				{
@@ -276,7 +297,9 @@ public final class ObjectMesher
 		// start from the smallest corner, keeping the order round the triangle
 		int s = c[0] <= c[1] && c[0] <= c[2] ? 0 : c[1] <= c[2] ? 1 : 2;
 		long[] k = {c[s], c[(s + 1) % 3], c[(s + 2) % 3]};
-		return k[0] * 0x9E3779B97F4A7C15L ^ Long.rotateLeft(k[1] * 0xC2B2AE3D27D4EB4FL, 21) ^ Long.rotateLeft(k[2], 42);
+		// the grid too: triangles snapped to different grids aren't the same
+		return k[0] * 0x9E3779B97F4A7C15L ^ Long.rotateLeft(k[1] * 0xC2B2AE3D27D4EB4FL, 21) ^ Long.rotateLeft(k[2], 42)
+			^ (long) Float.floatToIntBits(cell) * 0x165667B19E3779F9L;
 	}
 
 	/** An object that changes with the player's state shows its default form. */

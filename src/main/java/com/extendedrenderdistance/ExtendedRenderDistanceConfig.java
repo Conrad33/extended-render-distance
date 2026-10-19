@@ -45,4 +45,16 @@ public interface ExtendedRenderDistanceConfig extends Config
 	{
 		return 1000;
 	}
+
+	@ConfigItem(
+		keyName = "simplification",
+		name = "Simplification",
+		description = "How far-away scenery is simplified to keep it fast. Size-aware keeps big things (pyramids, "
+			+ "castles) smooth; Uniform treats everything alike; None doesn't simplify at all (slowest)",
+		position = 4
+	)
+	default Simplification simplification()
+	{
+		return Simplification.SIZE_AWARE;
+	}
 }

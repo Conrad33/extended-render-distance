@@ -26,9 +26,19 @@ final class ObjectModels
 		final int faces;
 		/** How far the model reaches above its origin (local units, up positive). */
 		final int top;
+		/** The model's largest size across (local units), on any axis. */
+		final float extent;
 
 		Lit(float[] corners, int[] colours, int faces, int top)
 		{
+			float[] lo = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE};
+			float[] hi = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+			for (int i = 0; i < faces * 9; i++)
+			{
+				lo[i % 3] = Math.min(lo[i % 3], corners[i]);
+				hi[i % 3] = Math.max(hi[i % 3], corners[i]);
+			}
+			this.extent = faces == 0 ? 0 : Math.max(hi[0] - lo[0], Math.max(hi[1] - lo[1], hi[2] - lo[2]));
 			this.corners = corners;
 			this.colours = colours;
 			this.faces = faces;

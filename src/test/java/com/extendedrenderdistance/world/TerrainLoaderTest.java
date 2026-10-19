@@ -37,8 +37,18 @@ public class TerrainLoaderTest
 			}
 
 			ObjectMesher objects = new ObjectMesher(cache, new int[]{0x2b4a, 0x2b4a});
-			ObjectMesher.Detail[] details = {ObjectMesher.Detail.FULL, new ObjectMesher.Detail(false, false, 24),
-				new ObjectMesher.Detail(false, true, 64), new ObjectMesher.Detail(false, true, 160)};
+			ObjectMesher.Detail[] details = {ObjectMesher.Detail.FULL, new ObjectMesher.Detail(false, false, 24, false),
+				new ObjectMesher.Detail(false, true, 64, false), new ObjectMesher.Detail(false, true, 160, false)};
+			// far away, with and without size-aware simplification, and not at all
+			ObjectMesher.Detail[] far = {new ObjectMesher.Detail(false, true, 160, false),
+				new ObjectMesher.Detail(false, true, 160, true), new ObjectMesher.Detail(false, true, 0, false)};
+			for (int[] sq : new int[][]{{50, 53}, {52, 42}})
+			{
+				StringBuilder line = new StringBuilder("far square " + sq[0] + "," + sq[1] + " uniform/size-aware/none:");
+				for (ObjectMesher.Detail d : far)
+					line.append(" ").append(objects.build(w.region(sq[0], sq[1]), d, null).count / 3000).append("k");
+				System.out.println(line);
+			}
 			for (int[] sq : new int[][]{{50, 50}, {50, 53}, {46, 52}, {49, 54}})
 			{
 				StringBuilder line = new StringBuilder("square " + sq[0] + "," + sq[1] + ":");
