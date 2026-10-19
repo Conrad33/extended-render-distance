@@ -13,8 +13,9 @@ public interface ExtendedRenderDistanceConfig extends Config
 	@Range(min = 200, max = 10000)
 	@ConfigItem(
 		keyName = "viewRange",
-		name = "View distance",
-		description = "How far the world is drawn, in tiles. The haze thickens towards it",
+		name = "Terrain distance",
+		description = "How far the ground is drawn, in tiles. Nothing is drawn beyond it, and the haze thickens "
+			+ "towards it",
 		position = 1
 	)
 	default int viewDistance()
