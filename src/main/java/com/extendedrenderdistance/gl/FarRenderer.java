@@ -63,6 +63,7 @@ public class FarRenderer
 	private volatile WorldCache world;
 	private WorldCache builtFor;
 	private int builtScenery = -1, builtLandmarks = -1;
+	private boolean builtSimplify;
 	/** The part of the map drawn, and the one being worked out for where the player is now. */
 	private Reach reach, builtReach;
 	private CompletableFuture<Reach> nextReach;
@@ -274,7 +275,9 @@ public class FarRenderer
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
-		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks && terrain != null)
+		boolean simplify = config.simplify();
+		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks
+			&& simplify == builtSimplify && terrain != null)
 			return;
 		Reach rc = reach;
 		if (terrain == null || w != builtFor || rc != builtReach)
@@ -294,11 +297,22 @@ public class FarRenderer
 		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
 		scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
 		scenery.setFilter(r -> rc == null || rc.touches(r));
-		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, SCENERY_DETAIL[level], rc));
+		// unsimplified: the same levels (what's drawn where), but nothing snapped
+		ObjectMesher.Detail[] detail = simplify ? SCENERY_DETAIL : unsimplified();
+		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, detail[level], rc));
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;
 		builtLandmarks = lm;
+		builtSimplify = simplify;
+	}
+
+	private static ObjectMesher.Detail[] unsimplified()
+	{
+		ObjectMesher.Detail[] out = new ObjectMesher.Detail[SCENERY_DETAIL.length];
+		for (int i = 0; i < out.length; i++)
+			out[i] = new ObjectMesher.Detail(SCENERY_DETAIL[i].decorations, SCENERY_DETAIL[i].landmarksOnly, 0);
+		return out;
 	}
 
 	private void initProgram()

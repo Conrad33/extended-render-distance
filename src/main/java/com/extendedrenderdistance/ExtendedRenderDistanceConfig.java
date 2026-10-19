@@ -56,4 +56,16 @@ public interface ExtendedRenderDistanceConfig extends Config
 		// the GPU plugin's farthest draw distance
 		return 184;
 	}
+
+	@ConfigItem(
+		keyName = "simplify",
+		name = "Simplify distant scenery",
+		description = "Simplify the shapes of far-away structures and scenery so they render faster. Turn off to see "
+			+ "them exactly (slower)",
+		position = 4
+	)
+	default boolean simplify()
+	{
+		return true;
+	}
 }

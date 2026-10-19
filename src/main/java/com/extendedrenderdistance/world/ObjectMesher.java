@@ -30,8 +30,8 @@ public final class ObjectMesher
 		/** Everything, exactly. */
 		public static final Detail FULL = new Detail(true, false, 0);
 
-		final boolean decorations;
-		final boolean landmarksOnly;
+		public final boolean decorations;
+		public final boolean landmarksOnly;
 		/** Grid corners are snapped to (local units), 0 for none (see {@link #cellFor}). */
 		final int cell;
 
