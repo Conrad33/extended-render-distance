@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

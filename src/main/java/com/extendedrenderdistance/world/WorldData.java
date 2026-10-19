@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
@@ -28,7 +28,7 @@ public class WorldData
 				}
 				catch (Exception e)
 				{
-					log.error("Horizon: couldn't read the world from the game cache at {}", dir, e);
+					log.error("Extended Render Distance: couldn't read the world from the game cache at {}", dir, e);
 					return null;
 				}
 			});

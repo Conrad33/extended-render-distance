@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.io.Closeable;
 import java.io.File;
@@ -49,7 +49,7 @@ public final class WorldCache implements Closeable
 			ObjectDefinition[] objects = new ObjectDefinition[max + 1];
 			for (ObjectDefinition d : om.getObjects())
 				objects[d.getId()] = d;
-			log.info("Horizon: game cache ready in {} ms ({} objects)", (System.nanoTime() - start) / 1_000_000,
+			log.info("Extended Render Distance: game cache ready in {} ms ({} objects)", (System.nanoTime() - start) / 1_000_000,
 				objects.length);
 			return new WorldCache(store, terrain, objects);
 		}
@@ -85,7 +85,7 @@ public final class WorldCache implements Closeable
 		}
 		catch (IOException | RuntimeException e)
 		{
-			log.debug("Horizon: model {} didn't load", id, e);
+			log.debug("Extended Render Distance: model {} didn't load", id, e);
 			return null;
 		}
 	}

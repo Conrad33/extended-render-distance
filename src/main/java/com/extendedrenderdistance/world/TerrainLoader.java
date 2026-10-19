@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -132,14 +132,14 @@ public final class TerrainLoader
 				}
 			}
 			if (failed > 0)
-				log.warn("Horizon: {} map squares couldn't be read", failed);
+				log.warn("Extended Render Distance: {} map squares couldn't be read", failed);
 		}
 
 		List<WorldTerrain.Region> out = new ArrayList<>(raws.size());
 		for (Raw raw : raws.values())
 			out.add(new WorldTerrain.Region(raw.rx, raw.ry, raw.height, blend(raw, raws, underlays), raw.overlay,
 				raw.shape, raw.rise, raw.locs, raw.floors));
-		log.info("Horizon: read {} map squares of terrain and objects in {} ms", out.size(),
+		log.info("Extended Render Distance: read {} map squares of terrain and objects in {} ms", out.size(),
 			(System.nanoTime() - start) / 1_000_000);
 		return new WorldTerrain(out, overlayColours(overlays));
 	}

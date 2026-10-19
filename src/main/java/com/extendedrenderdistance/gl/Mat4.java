@@ -1,4 +1,4 @@
-package com.horizon.gl;
+package com.extendedrenderdistance.gl;
 
 /**
  * Column-major 4x4 matrices, the same as RuneLite's GPU plugin builds its projection with (so the world lines up

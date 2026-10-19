@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.io.File;
 import static org.junit.Assert.assertEquals;

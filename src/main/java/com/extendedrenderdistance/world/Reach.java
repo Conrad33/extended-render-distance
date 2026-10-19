@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,7 +62,7 @@ public final class Reach
 			}
 			catch (IOException | RuntimeException e)
 			{
-				log.warn("Horizon: couldn't read the client's map areas", e);
+				log.warn("Extended Render Distance: couldn't read the client's map areas", e);
 				return 0;
 			}
 		}

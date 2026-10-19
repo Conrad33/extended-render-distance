@@ -1,14 +1,14 @@
-package com.horizon;
+package com.extendedrenderdistance;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Range;
 
-@ConfigGroup(HorizonConfig.GROUP)
-public interface HorizonConfig extends Config
+@ConfigGroup(ExtendedRenderDistanceConfig.GROUP)
+public interface ExtendedRenderDistanceConfig extends Config
 {
-	String GROUP = "horizon";
+	String GROUP = "extendedrenderdistance";
 
 	@Range(min = 200, max = 4000)
 	@ConfigItem(

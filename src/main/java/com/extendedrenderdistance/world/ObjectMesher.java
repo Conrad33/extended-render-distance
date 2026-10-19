@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 import net.runelite.cache.definitions.ObjectDefinition;
 

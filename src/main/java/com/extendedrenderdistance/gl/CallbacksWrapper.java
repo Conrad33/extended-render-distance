@@ -1,4 +1,4 @@
-package com.horizon.gl;
+package com.extendedrenderdistance.gl;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -56,7 +56,7 @@ public class CallbacksWrapper
 		{
 			if (!name.equals(warnedAbout))
 			{
-				log.info("Horizon: {} draws with its own pipeline; the far world only works with the GPU plugin", name);
+				log.info("Extended Render Distance: {} draws with its own pipeline; the far world only works with the GPU plugin", name);
 				warnedAbout = name;
 			}
 			return;
@@ -65,7 +65,7 @@ public class CallbacksWrapper
 		proxy = (DrawCallbacks) Proxy.newProxyInstance(DrawCallbacks.class.getClassLoader(),
 			new Class<?>[]{DrawCallbacks.class}, handler(current));
 		client.setDrawCallbacks(proxy);
-		log.debug("Horizon: wrapped {}", name);
+		log.debug("Extended Render Distance: wrapped {}", name);
 	}
 
 	/** Whether {@code target} is {@code c} or wraps it, following fields that hold draw callbacks. */
@@ -144,7 +144,7 @@ public class CallbacksWrapper
 		}
 		catch (RuntimeException e)
 		{
-			log.error("Horizon: drawing the far world failed", e);
+			log.error("Extended Render Distance: drawing the far world failed", e);
 		}
 	}
 }

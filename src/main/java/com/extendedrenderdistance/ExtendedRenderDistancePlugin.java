@@ -1,9 +1,9 @@
-package com.horizon;
+package com.extendedrenderdistance;
 
 import com.google.inject.Provides;
-import com.horizon.gl.CallbacksWrapper;
-import com.horizon.gl.FarRenderer;
-import com.horizon.world.WorldData;
+import com.extendedrenderdistance.gl.CallbacksWrapper;
+import com.extendedrenderdistance.gl.FarRenderer;
+import com.extendedrenderdistance.world.WorldData;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.events.BeforeRender;
@@ -15,11 +15,11 @@ import net.runelite.client.plugins.PluginDescriptor;
 
 @Slf4j
 @PluginDescriptor(
-	name = "Horizon",
+	name = "Extended Render Distance",
 	description = "Draws the world past the normal render distance, out to the horizon, from the game cache. Needs the GPU plugin",
-	tags = {"draw", "distance", "render", "view", "horizon", "far", "gpu"}
+	tags = {"draw", "distance", "render", "view", "horizon", "far", "extended", "gpu"}
 )
-public class HorizonPlugin extends Plugin
+public class ExtendedRenderDistancePlugin extends Plugin
 {
 	@Inject
 	private ClientThread clientThread;
@@ -50,8 +50,8 @@ public class HorizonPlugin extends Plugin
 	}
 
 	@Provides
-	HorizonConfig provideConfig(ConfigManager configManager)
+	ExtendedRenderDistanceConfig provideConfig(ConfigManager configManager)
 	{
-		return configManager.getConfig(HorizonConfig.class);
+		return configManager.getConfig(ExtendedRenderDistanceConfig.class);
 	}
 }

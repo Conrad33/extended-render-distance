@@ -1,10 +1,10 @@
-package com.horizon.gl;
+package com.extendedrenderdistance.gl;
 
-import com.horizon.HorizonConfig;
-import com.horizon.world.ObjectMesher;
-import com.horizon.world.Reach;
-import com.horizon.world.TerrainMesher;
-import com.horizon.world.WorldCache;
+import com.extendedrenderdistance.ExtendedRenderDistanceConfig;
+import com.extendedrenderdistance.world.ObjectMesher;
+import com.extendedrenderdistance.world.Reach;
+import com.extendedrenderdistance.world.TerrainMesher;
+import com.extendedrenderdistance.world.WorldCache;
 import java.util.concurrent.CompletableFuture;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -57,7 +57,7 @@ public class FarRenderer
 
 	private final Client client;
 	private final ConfigManager configManager;
-	private final HorizonConfig config;
+	private final ExtendedRenderDistanceConfig config;
 
 	private volatile WorldCache world;
 	private WorldCache builtFor;
@@ -75,7 +75,7 @@ public class FarRenderer
 	private boolean failed;
 
 	@Inject
-	FarRenderer(Client client, ConfigManager configManager, HorizonConfig config)
+	FarRenderer(Client client, ConfigManager configManager, ExtendedRenderDistanceConfig config)
 	{
 		this.client = client;
 		this.configManager = configManager;
@@ -111,7 +111,7 @@ public class FarRenderer
 			}
 			catch (RuntimeException e)
 			{
-				log.error("Horizon: couldn't set up the far renderer", e);
+				log.error("Extended Render Distance: couldn't set up the far renderer", e);
 				failed = true;
 				return;
 			}

@@ -14,7 +14,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.horizon.HorizonPluginTest'
+def pluginMainClass = 'com.extendedrenderdistance.ExtendedRenderDistancePluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
@@ -35,7 +35,7 @@ dependencies {
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
 }
 
-group = 'com.horizon'
+group = 'com.extendedrenderdistance'
 version = '0.1.0'
 
 tasks.withType(JavaCompile).configureEach {

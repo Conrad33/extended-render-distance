@@ -1,7 +1,7 @@
-package com.horizon.gl;
+package com.extendedrenderdistance.gl;
 
-import com.horizon.world.TerrainMesher;
-import com.horizon.world.WorldTerrain;
+import com.extendedrenderdistance.world.TerrainMesher;
+import com.extendedrenderdistance.world.WorldTerrain;
 import java.lang.ref.Reference;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -84,7 +84,7 @@ final class RegionLayer
 		this.uploadsPerFrame = uploadsPerFrame;
 		this.workers = Executors.newFixedThreadPool(threads, r ->
 		{
-			Thread t = new Thread(r, "Horizon " + name);
+			Thread t = new Thread(r, "Render distance " + name);
 			t.setDaemon(true);
 			t.setPriority(Thread.NORM_PRIORITY - 1);
 			return t;
@@ -261,7 +261,7 @@ final class RegionLayer
 				}
 				catch (RuntimeException | OutOfMemoryError e)
 				{
-					log.warn("Horizon: couldn't build {} for square {},{}", name, r.rx, r.ry, e);
+					log.warn("Extended Render Distance: couldn't build {} for square {},{}", name, r.rx, r.ry, e);
 				}
 				finally
 				{

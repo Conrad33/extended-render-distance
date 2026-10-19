@@ -1,4 +1,4 @@
-package com.horizon.world;
+package com.extendedrenderdistance.world;
 
 /**
  * The client's overlay tile shapes as 4 x 4 masks (which sixteenths of a tile the overlay covers), per shape and

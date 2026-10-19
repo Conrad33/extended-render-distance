@@ -1,4 +1,4 @@
-package com.horizon.gl;
+package com.extendedrenderdistance.gl;
 
 import static org.lwjgl.opengl.GL33C.*;
 
