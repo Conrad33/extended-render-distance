@@ -2,6 +2,7 @@ package com.horizon.gl;
 
 import com.horizon.world.TerrainMesher;
 import com.horizon.world.WorldTerrain;
+import java.lang.ref.Reference;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -291,6 +292,8 @@ final class RegionLayer
 				glBindVertexArray(m.vao);
 				glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
 				glBufferData(GL_ARRAY_BUFFER, b.vertices, GL_STATIC_DRAW);
+				// the driver reads the buffer's memory during the call: it must not be collected (and freed) before
+				Reference.reachabilityFence(b.vertices);
 				glVertexAttribPointer(0, 3, GL_FLOAT, false, TerrainMesher.STRIDE, 0);
 				glEnableVertexAttribArray(0);
 				glVertexAttribIPointer(1, 1, GL_INT, TerrainMesher.STRIDE, 12);
