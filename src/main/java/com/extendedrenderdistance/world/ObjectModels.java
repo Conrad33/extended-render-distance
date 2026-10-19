@@ -2,10 +2,10 @@ package com.extendedrenderdistance.world;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import net.runelite.cache.definitions.ModelDefinition;
-import net.runelite.cache.definitions.ObjectDefinition;
-import net.runelite.cache.models.FaceNormal;
-import net.runelite.cache.models.VertexNormal;
+import com.extendedrenderdistance.cache.definitions.ModelDefinition;
+import com.extendedrenderdistance.cache.definitions.ObjectDefinition;
+import com.extendedrenderdistance.cache.models.FaceNormal;
+import com.extendedrenderdistance.cache.models.VertexNormal;
 
 /**
  * Objects' models as the client builds them for the scene, from the cache: the definition's model for the

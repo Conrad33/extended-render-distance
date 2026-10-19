@@ -19,8 +19,9 @@ def pluginMainClass = 'com.extendedrenderdistance.ExtendedRenderDistancePluginTe
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
 
-	// the whole world's map from the game cache on disk (RuneLite's own cache reader)
-	implementation(group: 'net.runelite', name: 'cache', version: runeLiteVersion) {
+	// RuneLite's cache reader, for the tests only (they read the game cache files on disk; the plugin reads through
+	// the client and decodes with its own copy of the decoders)
+	testImplementation(group: 'net.runelite', name: 'cache', version: runeLiteVersion) {
 		exclude group: 'org.slf4j', module: 'slf4j-simple'
 		exclude group: 'commons-cli'
 		exclude group: 'org.antlr'

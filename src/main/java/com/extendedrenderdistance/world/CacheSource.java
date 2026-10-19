@@ -25,4 +25,6 @@ public interface CacheSource
 	<T> T read(Reader<T> work) throws InterruptedException;
 
 	int MAPS = 5, CONFIGS = 2, MODELS = 7;
+	/** Groups of the configs index. */
+	int UNDERLAYS = 1, OVERLAYS = 4, OBJECTS = 6;
 }

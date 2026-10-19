@@ -1,6 +1,6 @@
 package com.extendedrenderdistance.world;
 
-import net.runelite.cache.definitions.ObjectDefinition;
+import com.extendedrenderdistance.cache.definitions.ObjectDefinition;
 
 /**
  * Builds one map square's scenery (every placement on every plane) into a single mesh, placed the way the client

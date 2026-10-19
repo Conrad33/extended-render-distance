@@ -6,11 +6,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.cache.ConfigType;
-import net.runelite.cache.definitions.ModelDefinition;
-import net.runelite.cache.definitions.ObjectDefinition;
-import net.runelite.cache.definitions.loaders.ModelLoader;
-import net.runelite.cache.definitions.loaders.ObjectLoader;
+import com.extendedrenderdistance.cache.definitions.ModelDefinition;
+import com.extendedrenderdistance.cache.definitions.ObjectDefinition;
+import com.extendedrenderdistance.cache.definitions.loaders.ModelLoader;
+import com.extendedrenderdistance.cache.definitions.loaders.ObjectLoader;
 
 /**
  * The game cache as this plugin uses it: the whole map's terrain and placements and every object definition (read
@@ -41,7 +40,7 @@ public final class WorldCache
 	{
 		long start = System.nanoTime();
 		WorldTerrain terrain = TerrainLoader.load(source);
-		Map<Integer, byte[]> files = TerrainLoader.configFiles(source, ConfigType.OBJECT);
+		Map<Integer, byte[]> files = TerrainLoader.configFiles(source, CacheSource.OBJECTS);
 		int max = 0;
 		for (int id : files.keySet())
 			max = Math.max(max, id);

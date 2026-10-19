@@ -5,17 +5,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.cache.ConfigType;
-import net.runelite.cache.definitions.LocationsDefinition;
-import net.runelite.cache.definitions.MapDefinition;
-import net.runelite.cache.definitions.OverlayDefinition;
-import net.runelite.cache.definitions.UnderlayDefinition;
-import net.runelite.cache.definitions.loaders.LocationsLoader;
-import net.runelite.cache.definitions.loaders.MapLoader;
-import net.runelite.cache.definitions.loaders.OverlayLoader;
-import net.runelite.cache.definitions.loaders.UnderlayLoader;
-import net.runelite.cache.region.Location;
-import net.runelite.cache.region.Region;
+import com.extendedrenderdistance.cache.definitions.LocationsDefinition;
+import com.extendedrenderdistance.cache.definitions.MapDefinition;
+import com.extendedrenderdistance.cache.definitions.OverlayDefinition;
+import com.extendedrenderdistance.cache.definitions.UnderlayDefinition;
+import com.extendedrenderdistance.cache.definitions.loaders.LocationsLoader;
+import com.extendedrenderdistance.cache.definitions.loaders.MapLoader;
+import com.extendedrenderdistance.cache.definitions.loaders.OverlayLoader;
+import com.extendedrenderdistance.cache.definitions.loaders.UnderlayLoader;
+import com.extendedrenderdistance.cache.region.Location;
+import com.extendedrenderdistance.cache.region.Region;
 
 /**
  * Reads the whole map out of the game cache (the surface and every dungeon), through a {@link CacheSource}: every map square's plane 0 heights, underlays and
@@ -326,7 +325,7 @@ public final class TerrainLoader
 
 	private static UnderlayDefinition[] loadUnderlays(CacheSource cache) throws InterruptedException
 	{
-		Map<Integer, byte[]> files = configFiles(cache, ConfigType.UNDERLAY);
+		Map<Integer, byte[]> files = configFiles(cache, CacheSource.UNDERLAYS);
 		UnderlayDefinition[] out = new UnderlayDefinition[maxKey(files) + 1];
 		UnderlayLoader loader = new UnderlayLoader();
 		for (Map.Entry<Integer, byte[]> e : files.entrySet())
@@ -340,7 +339,7 @@ public final class TerrainLoader
 
 	private static OverlayDefinition[] loadOverlays(CacheSource cache) throws InterruptedException
 	{
-		Map<Integer, byte[]> files = configFiles(cache, ConfigType.OVERLAY);
+		Map<Integer, byte[]> files = configFiles(cache, CacheSource.OVERLAYS);
 		OverlayDefinition[] out = new OverlayDefinition[maxKey(files) + 1];
 		OverlayLoader loader = new OverlayLoader();
 		for (Map.Entry<Integer, byte[]> e : files.entrySet())
@@ -353,9 +352,9 @@ public final class TerrainLoader
 	}
 
 	/** Every file of a config group (underlays, overlays, objects), by id. */
-	static Map<Integer, byte[]> configFiles(CacheSource cache, ConfigType type) throws InterruptedException
+	static Map<Integer, byte[]> configFiles(CacheSource cache, int group) throws InterruptedException
 	{
-		int[] ids = cache.read(files -> files.fileIds(CacheSource.CONFIGS, type.getId()));
+		int[] ids = cache.read(files -> files.fileIds(CacheSource.CONFIGS, group));
 		Map<Integer, byte[]> out = new HashMap<>();
 		if (ids == null)
 			return out;
@@ -368,7 +367,7 @@ public final class TerrainLoader
 				Map<Integer, byte[]> part = new HashMap<>();
 				for (int k = from; k < to; k++)
 				{
-					byte[] b = files.file(CacheSource.CONFIGS, type.getId(), ids[k]);
+					byte[] b = files.file(CacheSource.CONFIGS, group, ids[k]);
 					if (b != null)
 						part.put(ids[k], b);
 				}
