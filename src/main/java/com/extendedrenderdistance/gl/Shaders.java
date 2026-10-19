@@ -90,6 +90,8 @@ final class Shaders
 		"flat out vec2 fAnchor;",
 		"out vec2 fUv;",
 		"out float fTexLight;",
+		"out vec3 fTexTint;",
+		"noperspective centroid out vec3 fHsl;",
 		"flat out int fTexture;",
 		HSL_TO_RGB,
 		"void main() {",
@@ -106,6 +108,8 @@ final class Shaders
 		"  int id = texInfo & 255;",
 		"  fTexture = id | ((texInfo & 0x8000) != 0 ? 0x100 : 0);",
 		"  fTexLight = float(texInfo >> 8 & 127) / 127.0;",
+		"  fTexTint = hslToRgb(texInfo >> 8 & 127, brightness);",
+		"  fHsl = vec3(colour >> 10 & 63, colour >> 7 & 7, colour & 127);",
 		"  fUv = uv / 256.0;",
 		"  if (id > 0) fUv += float(tick) * textureAnimations[min(id - 1, 255)] / 128.0;",
 		"}");
@@ -118,6 +122,8 @@ final class Shaders
 		"flat in vec2 fAnchor;",
 		"in vec2 fUv;",
 		"in float fTexLight;",
+		"in vec3 fTexTint;",
+		"noperspective centroid in vec3 fHsl;",
 		"flat in int fTexture;",
 		"uniform sampler2D drawnZones;",
 		"uniform vec2 zonesOrigin;",
@@ -126,7 +132,10 @@ final class Shaders
 		"uniform int texturesOn;",
 		"uniform float textureEnd;",
 		"uniform float brightness;",
+		"uniform float textureLightMode;",
+		"uniform float smoothBanding;",
 		"out vec4 frag;",
+		HSL_TO_RGB,
 		"bool drawn(vec2 p) {",
 		"  ivec2 c = ivec2(floor((p - zonesOrigin) / 1024.0));",
 		"  if (c.x < 0 || c.y < 0 || c.x >= 32 || c.y >= 32) return false;",
@@ -139,7 +148,11 @@ final class Shaders
 		"      && drawn(fPos.xz + vec2(0.0, 1024.0)) && drawn(fPos.xz - vec2(0.0, 1024.0))) discard;",
 		"  float dist = length(fPos.xz);",
 		"  if (dist > viewEnd) discard;",
-		"  vec3 colour = fColour;",
+		// as the GPU plugin: the smoothly blended colour, or with smooth banding off the colour blended in steps (hue,
+		// saturation and lightness blended apart: a far quad's corners can be different ground, whose packed colours
+		// blended together would mix their bits)
+		"  ivec3 h = ivec3(fHsl);",
+		"  vec3 colour = mix(fColour, hslToRgb(h.x << 10 | h.y << 7 | h.z, brightness), smoothBanding);",
 		"  int id = fTexture & 255;",
 		"  if (texturesOn == 1 && id > 0 && dist < textureEnd) {",
 		// coarse ground repeats its texture every tile: the gradients of the unwrapped coordinates keep the mip level
@@ -147,8 +160,9 @@ final class Shaders
 		"    vec3 layer = vec3(at, float(id - 1));",
 		"    if (textureLod(textures, layer, 0.0).a < 1.0) discard;",
 		"    vec3 t = textureGrad(textures, layer, dFdx(fUv), dFdy(fUv)).rgb;",
-		"    vec3 lit = pow(t, vec3(brightness)) * fTexLight;",
-		"    colour = mix(lit, fColour, smoothstep(textureEnd * 0.85, textureEnd, dist));",
+		// as the GPU plugin: lit by the light, or with bright textures by the light's colour
+		"    vec3 lit = pow(t, vec3(brightness)) * mix(vec3(fTexLight), fTexTint, textureLightMode);",
+		"    colour = mix(lit, colour, smoothstep(textureEnd * 0.85, textureEnd, dist));",
 		"  }",
 		"  frag = vec4(colour, 1.0);",
 		"}");

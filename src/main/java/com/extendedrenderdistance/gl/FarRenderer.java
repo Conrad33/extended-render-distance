@@ -16,6 +16,7 @@ import net.runelite.api.Texture;
 import net.runelite.api.TextureProvider;
 import net.runelite.api.WorldView;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.client.config.ConfigManager;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
 import static org.lwjgl.opengl.GL33C.*;
@@ -60,6 +61,7 @@ public class FarRenderer
 	private final Client client;
 	private final DrawnZones zones = new DrawnZones();
 	private final ExtendedRenderDistanceConfig config;
+	private final ConfigManager configManager;
 
 	private volatile WorldCache world;
 	private WorldCache builtFor;
@@ -82,6 +84,7 @@ public class FarRenderer
 	private int program, uniProj, uniOffset, uniBrightness, uniViewEnd, uniDepthScale;
 	private int uniZones, uniZonesOrigin, maskTexture;
 	private int uniTextures, uniTexturesOn, uniTextureEnd, uniTick, uniTextureAnimations;
+	private int uniTextureLightMode, uniSmoothBanding;
 	/** The texture animations are set on the program. */
 	private boolean animationsSet;
 	private int tick;
@@ -90,8 +93,9 @@ public class FarRenderer
 	private boolean failed;
 
 	@Inject
-	FarRenderer(Client client, ExtendedRenderDistanceConfig config)
+	FarRenderer(Client client, ExtendedRenderDistanceConfig config, ConfigManager configManager)
 	{
+		this.configManager = configManager;
 		this.client = client;
 		this.config = config;
 	}
@@ -392,6 +396,16 @@ public class FarRenderer
 		glUniform1i(uniTextures, 1);
 		glUniform1i(uniTexturesOn, array != 0 && animationsSet ? 1 : 0);
 		glUniform1f(uniTextureEnd, config.textureDistance() * 128f);
+		// the GPU plugin's own colour settings, so the far world matches its scene
+		glUniform1f(uniTextureLightMode, gpuSetting("brightTextures", false) ? 1f : 0f);
+		glUniform1f(uniSmoothBanding, gpuSetting("smoothBanding", true) ? 0f : 1f);
+	}
+
+	/** A GPU plugin setting, or its default when it hasn't been changed. */
+	private boolean gpuSetting(String key, boolean byDefault)
+	{
+		Boolean value = configManager.getConfiguration("gpu", key, Boolean.class);
+		return value == null ? byDefault : value;
 	}
 
 	/** Each texture's scroll per tick (texels), as the GPU plugin works it out (BSD-2). */
@@ -451,6 +465,8 @@ public class FarRenderer
 		uniTextureEnd = glGetUniformLocation(program, "textureEnd");
 		uniTick = glGetUniformLocation(program, "tick");
 		uniTextureAnimations = glGetUniformLocation(program, "textureAnimations");
+		uniTextureLightMode = glGetUniformLocation(program, "textureLightMode");
+		uniSmoothBanding = glGetUniformLocation(program, "smoothBanding");
 	}
 
 	/** The client's colour for each texture (packed HSL): water, lava and so on. */
