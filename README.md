@@ -4,6 +4,8 @@ Render all of Gielinor at once. The game normally draws about 90 tiles around yo
 plugin's settings turned up. This plugin draws the rest of the world beyond that, out to the horizon: the
 terrain, buildings, trees and scenery of everywhere else, from the game's own cache.
 
+![Falador's castle, with the world out to the desert behind it](docs/screenshot.png)
+
 Requires the **GPU** plugin. It doesn't work with 117 HD.
 
 ## What it does
