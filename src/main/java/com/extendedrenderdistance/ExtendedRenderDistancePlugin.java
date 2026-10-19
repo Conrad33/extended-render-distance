@@ -17,7 +17,9 @@ import net.runelite.client.plugins.PluginDescriptor;
 @PluginDescriptor(
 	name = "Extended Render Distance",
 	description = "Render all of Gielinor at once. (requires GPU plugin)",
-	tags = {"draw", "distance", "render", "view", "horizon", "far", "extended", "gpu"}
+	tags = {"draw", "distance", "render", "view", "horizon", "far", "extended", "gpu"},
+	// 117 HD replaces the GPU plugin, which this draws into: RuneLite turns one off when the other is turned on
+	conflicts = "117 HD"
 )
 public class ExtendedRenderDistancePlugin extends Plugin
 {
