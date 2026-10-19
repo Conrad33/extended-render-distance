@@ -52,6 +52,12 @@ public final class TerrainLoader
 	{
 	}
 
+	/**
+	 * A terrain file is never smaller than this (it encodes all 4 x 64 x 64 tiles); groups in the maps index whose
+	 * file 0 is smaller aren't map squares (group 25287 holds something else entirely) and are skipped.
+	 */
+	private static final int MIN_TERRAIN_BYTES = 1024;
+
 	/** Map squares read per batch (one batch runs on the client thread in a frame's slice). */
 	private static final int BATCH = 24;
 	/**
@@ -115,6 +121,8 @@ public final class TerrainLoader
 						stillMissing.add(id);
 						continue;
 					}
+					if (data[k][0].length < MIN_TERRAIN_BYTES)
+						continue;
 					try
 					{
 						raws.put(id, decode(id >> 8, id & 255, data[k][0], data[k][1], underlays));

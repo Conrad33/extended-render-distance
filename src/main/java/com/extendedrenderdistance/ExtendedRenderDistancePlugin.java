@@ -30,8 +30,6 @@ public class ExtendedRenderDistancePlugin extends Plugin
 	@Inject
 	private CallbacksWrapper wrapper;
 	@Inject
-	private SpinnerClamp spinnerClamp;
-	@Inject
 	private ClientCache clientCache;
 
 	@Override
@@ -40,7 +38,6 @@ public class ExtendedRenderDistancePlugin extends Plugin
 		// read the world from the client's game cache in the background
 		clientCache.open();
 		worldData.whenLoaded(clientCache, farRenderer::setWorld);
-		javax.swing.SwingUtilities.invokeLater(spinnerClamp::install);
 	}
 
 	@Override
@@ -48,7 +45,6 @@ public class ExtendedRenderDistancePlugin extends Plugin
 	{
 		clientThread.invoke(wrapper::unwrap);
 		clientCache.close();
-		javax.swing.SwingUtilities.invokeLater(spinnerClamp::uninstall);
 	}
 
 	@Subscribe
