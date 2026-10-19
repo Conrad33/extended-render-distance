@@ -66,6 +66,36 @@ final class ObjectModels
 		this.textureColours = textureColours;
 	}
 
+	/** Adds the model files {@link #get} would read for this, if it isn't built yet. */
+	void needed(ObjectDefinition d, int type, int orientation, java.util.Set<Integer> out)
+	{
+		synchronized (lit)
+		{
+			if (lit.containsKey((long) d.getId() << 16 | type << 4 | orientation))
+				return;
+		}
+		int[] ids = d.getObjectModels(), types = d.getObjectTypes();
+		if (ids == null)
+			return;
+		if (types == null)
+		{
+			if (type == 10)
+			{
+				for (int id : ids)
+					out.add(id);
+			}
+			return;
+		}
+		for (int i = 0; i < types.length && i < ids.length; i++)
+		{
+			if (types[i] == type)
+			{
+				out.add(ids[i]);
+				return;
+			}
+		}
+	}
+
 	/**
 	 * The model an object shows for a placement type (the client's model type: 11 shows as 10) and orientation (0
 	 * to 7: 4 and up are mirrored), or null when it has none for that type.

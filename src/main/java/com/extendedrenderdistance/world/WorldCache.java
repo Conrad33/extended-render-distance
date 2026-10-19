@@ -1,63 +1,66 @@
 package com.extendedrenderdistance.world;
 
-import java.io.Closeable;
-import java.io.File;
-import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.cache.IndexType;
-import net.runelite.cache.ObjectManager;
+import net.runelite.cache.ConfigType;
 import net.runelite.cache.definitions.ModelDefinition;
 import net.runelite.cache.definitions.ObjectDefinition;
 import net.runelite.cache.definitions.loaders.ModelLoader;
-import net.runelite.cache.fs.Archive;
-import net.runelite.cache.fs.Index;
-import net.runelite.cache.fs.Store;
+import net.runelite.cache.definitions.loaders.ObjectLoader;
 
 /**
- * The game cache on disk, kept open: the surface world's terrain and placements (read once), every object
- * definition, and models read on demand. Any thread (reads from the store are serialised).
+ * The game cache as this plugin uses it: the whole map's terrain and placements and every object definition (read
+ * once, at the start), and models read as scenery is built. Everything comes through a {@link CacheSource}. Any
+ * thread.
  */
 @Slf4j
-public final class WorldCache implements Closeable
+public final class WorldCache
 {
-	private final Store store;
-	private final Index models;
+	/** Models read per batch. */
+	private static final int MODEL_BATCH = 200;
+
+	private final CacheSource source;
 	public final WorldTerrain terrain;
 	private final ObjectDefinition[] objects;
+	/** Model files read ahead for scenery being built, by id. */
+	private final Map<Integer, byte[]> prefetched = new ConcurrentHashMap<>();
 
-	private WorldCache(Store store, WorldTerrain terrain, ObjectDefinition[] objects)
+	private WorldCache(CacheSource source, WorldTerrain terrain, ObjectDefinition[] objects)
 	{
-		this.store = store;
-		this.models = store.getIndex(IndexType.MODELS);
+		this.source = source;
 		this.terrain = terrain;
 		this.objects = objects;
 	}
 
-	public static WorldCache open(File dir) throws IOException
+	/** Reads the map and the object definitions. Blocks while the reads are served: off the client thread. */
+	public static WorldCache open(CacheSource source) throws InterruptedException
 	{
 		long start = System.nanoTime();
-		Store store = new Store(dir);
-		try
+		WorldTerrain terrain = TerrainLoader.load(source);
+		Map<Integer, byte[]> files = TerrainLoader.configFiles(source, ConfigType.OBJECT);
+		int max = 0;
+		for (int id : files.keySet())
+			max = Math.max(max, id);
+		ObjectDefinition[] objects = new ObjectDefinition[max + 1];
+		ObjectLoader loader = new ObjectLoader();
+		for (Map.Entry<Integer, byte[]> e : files.entrySet())
 		{
-			store.load();
-			WorldTerrain terrain = TerrainLoader.load(store);
-			ObjectManager om = new ObjectManager(store);
-			om.load();
-			int max = 0;
-			for (ObjectDefinition d : om.getObjects())
-				max = Math.max(max, d.getId());
-			ObjectDefinition[] objects = new ObjectDefinition[max + 1];
-			for (ObjectDefinition d : om.getObjects())
-				objects[d.getId()] = d;
-			log.info("Extended Render Distance: game cache ready in {} ms ({} objects)", (System.nanoTime() - start) / 1_000_000,
-				objects.length);
-			return new WorldCache(store, terrain, objects);
+			try
+			{
+				objects[e.getKey()] = loader.load(e.getKey(), e.getValue());
+			}
+			catch (RuntimeException ex)
+			{
+				log.debug("Extended Render Distance: object {} didn't decode", e.getKey(), ex);
+			}
 		}
-		catch (IOException | RuntimeException e)
-		{
-			store.close();
-			throw e;
-		}
+		log.info("Extended Render Distance: game cache ready in {} ms ({} objects)", (System.nanoTime() - start) / 1_000_000,
+			objects.length);
+		return new WorldCache(source, terrain, objects);
 	}
 
 	public ObjectDefinition object(int id)
@@ -65,37 +68,59 @@ public final class WorldCache implements Closeable
 		return id >= 0 && id < objects.length ? objects[id] : null;
 	}
 
-	/** A fresh copy of a model (safe to change), or null. */
-	public ModelDefinition model(int id)
+	/** Reads these models' files ahead, in a few batches, so building a square's scenery doesn't wait on each. */
+	public void prefetchModels(Collection<Integer> ids) throws InterruptedException
 	{
-		byte[] data;
-		try
+		List<Integer> wanted = new ArrayList<>();
+		for (int id : ids)
 		{
-			synchronized (store)
-			{
-				Archive a = models.getArchive(id);
-				if (a == null)
-					return null;
-				byte[] raw = store.getStorage().loadArchive(a);
-				if (raw == null)
-					return null;
-				data = a.decompress(raw);
-			}
-			return new ModelLoader().load(id, data);
+			if (!prefetched.containsKey(id))
+				wanted.add(id);
 		}
-		catch (IOException | RuntimeException e)
+		for (int i = 0; i < wanted.size(); i += MODEL_BATCH)
 		{
-			log.debug("Extended Render Distance: model {} didn't load", id, e);
-			return null;
+			List<Integer> batch = wanted.subList(i, Math.min(wanted.size(), i + MODEL_BATCH));
+			byte[][] data = source.read(files ->
+			{
+				byte[][] out = new byte[batch.size()][];
+				for (int k = 0; k < batch.size(); k++)
+					out[k] = files.file(CacheSource.MODELS, batch.get(k), 0);
+				return out;
+			});
+			for (int k = 0; k < batch.size(); k++)
+			{
+				if (data[k] != null)
+					prefetched.put(batch.get(k), data[k]);
+			}
 		}
 	}
 
-	@Override
-	public void close() throws IOException
+	/** Lets go of models read ahead. */
+	public void releaseModels(Collection<Integer> ids)
 	{
-		synchronized (store)
+		for (int id : ids)
+			prefetched.remove(id);
+	}
+
+	/** A fresh copy of a model (safe to change), or null. Read ahead if it can be; else read now (and waited for). */
+	public ModelDefinition model(int id)
+	{
+		byte[] data = prefetched.get(id);
+		try
 		{
-			store.close();
+			if (data == null)
+				data = source.read(files -> files.file(CacheSource.MODELS, id, 0));
+			return data == null ? null : new ModelLoader().load(id, data);
+		}
+		catch (InterruptedException e)
+		{
+			Thread.currentThread().interrupt();
+			return null;
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("Extended Render Distance: model {} didn't load", id, e);
+			return null;
 		}
 	}
 }

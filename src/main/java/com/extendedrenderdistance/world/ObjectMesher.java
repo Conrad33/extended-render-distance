@@ -71,6 +71,48 @@ public final class ObjectMesher
 
 	public TerrainMesher.Built build(WorldTerrain.Region r, Detail detail, Reach reach)
 	{
+		// read the square's models ahead in a few batches, rather than one at a time as they're met
+		java.util.Set<Integer> needed = new java.util.HashSet<>();
+		for (int i = 0; i < r.locCount(); i++)
+		{
+			ObjectDefinition d = resolve(cache.object(r.locId(i)));
+			if (d == null)
+				continue;
+			int type = r.locType(i), rot = r.locOrientation(i);
+			if (type == 2)
+			{
+				models.needed(d, 2, 4 + rot, needed);
+				models.needed(d, 2, rot + 1 & 3, needed);
+			}
+			else if (type >= 4 && type <= 8)
+				models.needed(d, 4, rot, needed);
+			else if (type == 11)
+				models.needed(d, 10, rot, needed);
+			else
+			{
+				models.needed(d, type, rot, needed);
+				if (type == 9)
+					models.needed(d, 10, rot, needed);
+			}
+		}
+		try
+		{
+			cache.prefetchModels(needed);
+			return buildPrefetched(r, detail, reach);
+		}
+		catch (InterruptedException e)
+		{
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("stopped", e);
+		}
+		finally
+		{
+			cache.releaseModels(needed);
+		}
+	}
+
+	private TerrainMesher.Built buildPrefetched(WorldTerrain.Region r, Detail detail, Reach reach)
+	{
 		WorldTerrain world = cache.terrain;
 		VertexSink sink = new VertexSink(1 << 14);
 		boolean landmarks = detail.landmarksOnly;

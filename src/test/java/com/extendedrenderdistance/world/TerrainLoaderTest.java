@@ -17,8 +17,9 @@ public class TerrainLoaderTest
 	public void readsTheSurface() throws Exception
 	{
 		assumeTrue(new File(CACHE, "main_file_cache.dat2").exists());
-		try (WorldCache cache = WorldCache.open(CACHE))
+		try (DiskCache disk = new DiskCache(CACHE))
 		{
+			WorldCache cache = WorldCache.open(disk);
 			WorldTerrain w = cache.terrain;
 			assertTrue("surface squares: " + w.regions().size(), w.regions().size() > 1000);
 

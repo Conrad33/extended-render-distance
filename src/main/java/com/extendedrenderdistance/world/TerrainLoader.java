@@ -1,13 +1,11 @@
 package com.extendedrenderdistance.world;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.cache.ConfigType;
-import net.runelite.cache.IndexType;
 import net.runelite.cache.definitions.LocationsDefinition;
 import net.runelite.cache.definitions.MapDefinition;
 import net.runelite.cache.definitions.OverlayDefinition;
@@ -16,17 +14,11 @@ import net.runelite.cache.definitions.loaders.LocationsLoader;
 import net.runelite.cache.definitions.loaders.MapLoader;
 import net.runelite.cache.definitions.loaders.OverlayLoader;
 import net.runelite.cache.definitions.loaders.UnderlayLoader;
-import net.runelite.cache.fs.Archive;
-import net.runelite.cache.fs.ArchiveFiles;
-import net.runelite.cache.fs.FSFile;
-import net.runelite.cache.fs.Index;
-import net.runelite.cache.fs.Storage;
-import net.runelite.cache.fs.Store;
 import net.runelite.cache.region.Location;
 import net.runelite.cache.region.Region;
 
 /**
- * Reads the whole map out of the game cache on disk (the surface and every dungeon): every map square's plane 0 heights, underlays and
+ * Reads the whole map out of the game cache (the surface and every dungeon), through a {@link CacheSource}: every map square's plane 0 heights, underlays and
  * overlays, how high the planes above sit, and its object placements (the maps index has one archive per region,
  * file 0 the terrain and file 1 the objects, unencrypted). Underlay colours are blended over the surrounding
  * 11 x 11 tiles the way the client does it, then packed to the client's 16-bit HSL. Slow (a few seconds): run it
@@ -61,79 +53,92 @@ public final class TerrainLoader
 	{
 	}
 
-	/** Reads the terrain and placements from an open, loaded store. */
-	public static WorldTerrain load(Store store) throws IOException
+	/** Map squares read per batch (one batch runs on the client thread in a frame's slice). */
+	private static final int BATCH = 24;
+	/**
+	 * When squares the client doesn't have yet are asked for again (seconds after the first pass): asking makes the
+	 * client fetch them over its own update connection, so only a few times, and never again after.
+	 */
+	private static final int[] RETRY_AFTER_SECONDS = {10, 30, 60};
+
+	/** Reads the terrain and placements. Blocks while the reads are served: off the client thread. */
+	public static WorldTerrain load(CacheSource cache) throws InterruptedException
 	{
 		long start = System.nanoTime();
-		Map<Integer, Raw> raws = new HashMap<>();
-		UnderlayDefinition[] underlays;
-		OverlayDefinition[] overlays;
+		UnderlayDefinition[] underlays = loadUnderlays(cache);
+		OverlayDefinition[] overlays = loadOverlays(cache);
+
+		// which map squares exist: one group per square, id rx << 8 | ry
+		List<Integer> squares = new ArrayList<>();
+		for (int rx0 = 0; rx0 < 256; rx0 += 16)
 		{
-			underlays = loadUnderlays(store);
-			overlays = loadOverlays(store);
-			Index maps = store.getIndex(IndexType.MAPS);
-			Storage storage = store.getStorage();
-			int failed = 0;
-			for (Archive archive : maps.getArchives())
+			int from = rx0;
+			squares.addAll(cache.read(files ->
 			{
-				int id = archive.getArchiveId();
-				int rx = id >> 8, ry = id & 255;
-				try
+				List<Integer> found = new ArrayList<>();
+				for (int rx = from; rx < from + 16; rx++)
 				{
-					byte[] data = storage.loadArchive(archive);
-					if (data == null)
-						continue;
-					ArchiveFiles files = archive.getFiles(data);
-					FSFile terrain = files.findFile(0);
-					if (terrain == null)
-						continue;
-					MapDefinition def = new MapLoader().load(rx, ry, terrain.getContents());
-					Region region = new Region(id);
-					region.loadTerrain(def);
-					Raw raw = new Raw(rx, ry);
-					for (int x = 0; x < 64; x++)
+					for (int ry = 0; ry < 256; ry++)
 					{
-						for (int y = 0; y < 64; y++)
-						{
-							int i = x << 6 | y;
-							raw.height[i] = (short) region.getTileHeight(0, x, y);
-							raw.underlay[i] = (short) region.getUnderlayId(0, x, y);
-							raw.overlay[i] = (short) region.getOverlayId(0, x, y);
-							raw.shape[i] = (byte) ((region.getOverlayPath(0, x, y) & 63) << 2
-								| region.getOverlayRotation(0, x, y) & 3);
-							for (int z = 1; z < 4; z++)
-								raw.rise[z - 1][i] = (byte) ((region.getTileHeight(z - 1, x, y) - region.getTileHeight(z, x, y)) / 8);
-						}
+						if (files.fileIds(CacheSource.MAPS, rx << 8 | ry) != null)
+							found.add(rx << 8 | ry);
 					}
-					raw.floors = floors(region, underlays);
-					FSFile objects = files.findFile(1);
-					if (objects != null)
-					{
-						LocationsDefinition locs = new LocationsLoader().load(rx, ry, objects.getContents());
-						long[] packed = new long[locs.getLocations().size()];
-						int k = 0;
-						for (Location l : locs.getLocations())
-						{
-							// positions are within the square
-							int lx = l.getPosition().getX(), ly = l.getPosition().getY();
-							if (lx < 0 || ly < 0 || lx > 63 || ly > 63)
-								continue;
-							packed[k++] = WorldTerrain.placement(l.getId(), l.getType(), l.getOrientation(),
-								l.getPosition().getZ(), lx, ly);
-						}
-						raw.locs = java.util.Arrays.copyOf(packed, k);
-					}
-					raws.put(id, raw);
 				}
-				catch (IOException | RuntimeException e)
+				return found;
+			}));
+		}
+
+		Map<Integer, Raw> raws = new HashMap<>();
+		List<Integer> missing = squares;
+		long firstPass = System.currentTimeMillis();
+		int failed = 0;
+		for (int attempt = 0; ; attempt++)
+		{
+			List<Integer> stillMissing = new ArrayList<>();
+			for (int i = 0; i < missing.size(); i += BATCH)
+			{
+				List<Integer> batch = missing.subList(i, Math.min(missing.size(), i + BATCH));
+				byte[][][] data = cache.read(files ->
 				{
-					// a square that won't decode is left out (it shows as void)
-					failed++;
+					byte[][][] out = new byte[batch.size()][][];
+					for (int k = 0; k < batch.size(); k++)
+					{
+						out[k] = new byte[][]{files.file(CacheSource.MAPS, batch.get(k), 0),
+							files.file(CacheSource.MAPS, batch.get(k), 1)};
+					}
+					return out;
+				});
+				for (int k = 0; k < batch.size(); k++)
+				{
+					int id = batch.get(k);
+					if (data[k][0] == null)
+					{
+						stillMissing.add(id);
+						continue;
+					}
+					try
+					{
+						raws.put(id, decode(id >> 8, id & 255, data[k][0], data[k][1], underlays));
+					}
+					catch (RuntimeException e)
+					{
+						// a square that won't decode is left out (it shows as void)
+						failed++;
+					}
 				}
 			}
-			if (failed > 0)
-				log.warn("Extended Render Distance: {} map squares couldn't be read", failed);
+			missing = stillMissing;
+			if (missing.isEmpty() || attempt >= RETRY_AFTER_SECONDS.length)
+				break;
+			// asking for them made the client fetch them: look again in a while
+			long wait = firstPass + RETRY_AFTER_SECONDS[attempt] * 1000L - System.currentTimeMillis();
+			if (wait > 0)
+				Thread.sleep(wait);
 		}
+		if (failed > 0)
+			log.warn("Extended Render Distance: {} map squares couldn't be read", failed);
+		if (!missing.isEmpty())
+			log.warn("Extended Render Distance: {} map squares weren't available from the client", missing.size());
 
 		List<WorldTerrain.Region> out = new ArrayList<>(raws.size());
 		for (Raw raw : raws.values())
@@ -142,6 +147,47 @@ public final class TerrainLoader
 		log.info("Extended Render Distance: read {} map squares of terrain and objects in {} ms", out.size(),
 			(System.nanoTime() - start) / 1_000_000);
 		return new WorldTerrain(out, overlayColours(overlays));
+	}
+
+	/** One map square from its terrain file and its placements file (which may be null). */
+	private static Raw decode(int rx, int ry, byte[] terrain, byte[] objects, UnderlayDefinition[] underlays)
+	{
+		MapDefinition def = new MapLoader().load(rx, ry, terrain);
+		Region region = new Region(rx << 8 | ry);
+		region.loadTerrain(def);
+		Raw raw = new Raw(rx, ry);
+		for (int x = 0; x < 64; x++)
+		{
+			for (int y = 0; y < 64; y++)
+			{
+				int i = x << 6 | y;
+				raw.height[i] = (short) region.getTileHeight(0, x, y);
+				raw.underlay[i] = (short) region.getUnderlayId(0, x, y);
+				raw.overlay[i] = (short) region.getOverlayId(0, x, y);
+				raw.shape[i] = (byte) ((region.getOverlayPath(0, x, y) & 63) << 2
+					| region.getOverlayRotation(0, x, y) & 3);
+				for (int z = 1; z < 4; z++)
+					raw.rise[z - 1][i] = (byte) ((region.getTileHeight(z - 1, x, y) - region.getTileHeight(z, x, y)) / 8);
+			}
+		}
+		raw.floors = floors(region, underlays);
+		if (objects != null)
+		{
+			LocationsDefinition locs = new LocationsLoader().load(rx, ry, objects);
+			long[] packed = new long[locs.getLocations().size()];
+			int k = 0;
+			for (Location l : locs.getLocations())
+			{
+				// positions are within the square
+				int lx = l.getPosition().getX(), ly = l.getPosition().getY();
+				if (lx < 0 || ly < 0 || lx > 63 || ly > 63)
+					continue;
+				packed[k++] = WorldTerrain.placement(l.getId(), l.getType(), l.getOrientation(),
+					l.getPosition().getZ(), lx, ly);
+			}
+			raw.locs = java.util.Arrays.copyOf(packed, k);
+		}
+		return raw;
 	}
 
 	/** Tiles flagged this way aren't drawn by the client. */
@@ -278,9 +324,9 @@ public final class TerrainLoader
 		return (hue / 4 & 63) << 10 | (sat / 32 & 7) << 7 | (light / 2 & 127);
 	}
 
-	private static UnderlayDefinition[] loadUnderlays(Store store) throws IOException
+	private static UnderlayDefinition[] loadUnderlays(CacheSource cache) throws InterruptedException
 	{
-		Map<Integer, byte[]> files = configFiles(store, ConfigType.UNDERLAY);
+		Map<Integer, byte[]> files = configFiles(cache, ConfigType.UNDERLAY);
 		UnderlayDefinition[] out = new UnderlayDefinition[maxKey(files) + 1];
 		UnderlayLoader loader = new UnderlayLoader();
 		for (Map.Entry<Integer, byte[]> e : files.entrySet())
@@ -292,9 +338,9 @@ public final class TerrainLoader
 		return out;
 	}
 
-	private static OverlayDefinition[] loadOverlays(Store store) throws IOException
+	private static OverlayDefinition[] loadOverlays(CacheSource cache) throws InterruptedException
 	{
-		Map<Integer, byte[]> files = configFiles(store, ConfigType.OVERLAY);
+		Map<Integer, byte[]> files = configFiles(cache, ConfigType.OVERLAY);
 		OverlayDefinition[] out = new OverlayDefinition[maxKey(files) + 1];
 		OverlayLoader loader = new OverlayLoader();
 		for (Map.Entry<Integer, byte[]> e : files.entrySet())
@@ -306,15 +352,29 @@ public final class TerrainLoader
 		return out;
 	}
 
-	private static Map<Integer, byte[]> configFiles(Store store, ConfigType type) throws IOException
+	/** Every file of a config group (underlays, overlays, objects), by id. */
+	static Map<Integer, byte[]> configFiles(CacheSource cache, ConfigType type) throws InterruptedException
 	{
-		Index configs = store.getIndex(IndexType.CONFIGS);
-		Archive archive = configs.getArchive(type.getId());
-		byte[] data = store.getStorage().loadArchive(archive);
-		ArchiveFiles files = archive.getFiles(data);
+		int[] ids = cache.read(files -> files.fileIds(CacheSource.CONFIGS, type.getId()));
 		Map<Integer, byte[]> out = new HashMap<>();
-		for (FSFile f : files.getFiles())
-			out.put(f.getFileId(), f.getContents());
+		if (ids == null)
+			return out;
+		// in slices, so no one frame reads them all
+		for (int i = 0; i < ids.length; i += 2000)
+		{
+			int from = i, to = Math.min(ids.length, i + 2000);
+			out.putAll(cache.read(files ->
+			{
+				Map<Integer, byte[]> part = new HashMap<>();
+				for (int k = from; k < to; k++)
+				{
+					byte[] b = files.file(CacheSource.CONFIGS, type.getId(), ids[k]);
+					if (b != null)
+						part.put(ids[k], b);
+				}
+				return part;
+			}));
+		}
 		return out;
 	}
 
