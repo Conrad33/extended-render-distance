@@ -16,7 +16,7 @@ import net.runelite.cache.definitions.ObjectDefinition;
  */
 public final class ObjectMesher
 {
-	/** Objects up to this size across (local units, 2 tiles) get a level's whole grid when size-aware. */
+	/** Squares whose objects are all up to this size across (local units, 2 tiles) get a level's whole grid. */
 	static final float SIZE_REFERENCE = 256;
 	/** Grids finer than this (local units) aren't worth snapping to. */
 	static final float MIN_CELL = 8;
@@ -28,39 +28,30 @@ public final class ObjectMesher
 	public static final class Detail
 	{
 		/** Everything, exactly. */
-		public static final Detail FULL = new Detail(true, false, 0, false);
+		public static final Detail FULL = new Detail(true, false, 0);
 
 		final boolean decorations;
 		final boolean landmarksOnly;
-		/** Grid corners are snapped to (local units), 0 for none. */
+		/** Grid corners are snapped to (local units), 0 for none (see {@link #cellFor}). */
 		final int cell;
-		/** Whether big objects get a finer grid, in proportion to their size (see {@link #cellFor}). */
-		final boolean sizeAware;
-		/** Whether the grid is chosen once for the whole square, for its biggest object (so pieces meet exactly). */
-		final boolean sealed;
 
-		public Detail(boolean decorations, boolean landmarksOnly, int cell, boolean sizeAware)
-		{
-			this(decorations, landmarksOnly, cell, sizeAware, false);
-		}
-
-		public Detail(boolean decorations, boolean landmarksOnly, int cell, boolean sizeAware, boolean sealed)
+		public Detail(boolean decorations, boolean landmarksOnly, int cell)
 		{
 			this.decorations = decorations;
 			this.landmarksOnly = landmarksOnly;
 			this.cell = cell;
-			this.sizeAware = sizeAware;
-			this.sealed = sealed;
 		}
 
 		/**
-		 * The grid for a model {@code extent} units across: the level's own, or for something bigger than
-		 * {@link #SIZE_REFERENCE}, finer in proportion (a 10-tile-tall piece of the Necropolis pyramid snaps to a
-		 * fifth of the grid a market stall does); none once that's under {@link #MIN_CELL}.
+		 * The grid for a square whose biggest model is {@code extent} units across: the level's own, or with
+		 * anything bigger than {@link #SIZE_REFERENCE} in it, finer in proportion (a square holding a 10-tile-tall
+		 * piece of the Necropolis pyramid snaps to a fifth of the grid of one with only market stalls); none once
+		 * that's under {@link #MIN_CELL}. One grid for the whole square, so neighbouring pieces of a structure still
+		 * meet exactly.
 		 */
 		float cellFor(float extent)
 		{
-			if (cell <= 0 || !sizeAware || extent <= SIZE_REFERENCE)
+			if (cell <= 0 || extent <= SIZE_REFERENCE)
 				return cell;
 			float c = cell * SIZE_REFERENCE / extent;
 			return c < MIN_CELL ? 0 : c;
@@ -84,8 +75,8 @@ public final class ObjectMesher
 		VertexSink sink = new VertexSink(1 << 14);
 		boolean landmarks = detail.landmarksOnly;
 		java.util.HashSet<Long> seen = detail.cell > 0 ? new java.util.HashSet<>() : null;
-		// sealed: one grid for the whole square, fine enough for the biggest object in it
-		float squareCell = detail.sealed ? detail.cellFor(biggest(r, detail, reach)) : -1;
+		// one grid for the whole square, fine enough for the biggest object in it
+		float cell = detail.cell > 0 ? detail.cellFor(biggest(r, detail, reach)) : 0;
 		float[] tri = new float[9];
 		int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
 		for (int i = 0; i < r.locCount(); i++)
@@ -154,7 +145,6 @@ public final class ObjectMesher
 					&& m.top + (world.height(wx, wy, 0, r) - cy) < LANDMARK_HEIGHT)
 					continue;
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
-				float cell = squareCell >= 0 ? squareCell : detail.cellFor(m.extent);
 				float[] c = m.corners;
 				for (int f = 0; f < m.faces; f++)
 				{

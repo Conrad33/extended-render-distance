@@ -1,7 +1,6 @@
 package com.extendedrenderdistance.gl;
 
 import com.extendedrenderdistance.ExtendedRenderDistanceConfig;
-import com.extendedrenderdistance.Simplification;
 import com.extendedrenderdistance.world.ObjectMesher;
 import com.extendedrenderdistance.world.Reach;
 import com.extendedrenderdistance.world.TerrainMesher;
@@ -43,10 +42,13 @@ public class FarRenderer
 	private static final int[] TERRAIN_STEPS = {1, 2, 4, 8, 16};
 	private static final double[] TERRAIN_RANGES = {40, 110, 260, 600};
 	/**
-	 * Scenery detail by level: exact, then no decorations, then only buildings and tall things; snapped (unless
-	 * simplification is off) to these grids (local units).
+	 * Scenery detail by level: exact, then no decorations snapped to a 24-unit grid, then only buildings and tall
+	 * things snapped to 64 and 160 units; finer for squares holding big structures (one grid per square, so their
+	 * pieces still meet).
 	 */
-	private static final int[] SCENERY_CELLS = {0, 24, 64, 160};
+	private static final ObjectMesher.Detail[] SCENERY_DETAIL = {ObjectMesher.Detail.FULL,
+		new ObjectMesher.Detail(false, false, 24), new ObjectMesher.Detail(false, true, 64),
+		new ObjectMesher.Detail(false, true, 160)};
 	/** Tiles out to which scenery is exact. */
 	private static final int FULL_DETAIL = 128;
 	/** Tiles out to which buildings are only a little simplified. */
@@ -61,7 +63,6 @@ public class FarRenderer
 	private volatile WorldCache world;
 	private WorldCache builtFor;
 	private int builtScenery = -1, builtLandmarks = -1;
-	private Simplification builtSimplification;
 	/** The part of the map drawn, and the one being worked out for where the player is now. */
 	private Reach reach, builtReach;
 	private CompletableFuture<Reach> nextReach;
@@ -274,9 +275,7 @@ public class FarRenderer
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.landmarkDistance());
-		Simplification simplify = config.simplification();
-		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks
-			&& simplify == builtSimplification && terrain != null)
+		if (w == builtFor && reach == builtReach && sc == builtScenery && lm == builtLandmarks && terrain != null)
 			return;
 		Reach rc = reach;
 		if (terrain == null || w != builtFor || rc != builtReach)
@@ -296,19 +295,11 @@ public class FarRenderer
 		double[] ranges = {Math.min(FULL_DETAIL, sc), sc, Math.max(sc, Math.min(BUILDINGS_FINE, lm)), lm};
 		scenery = new RegionLayer("scenery", ranges, false, 3, 9, 4);
 		scenery.setFilter(r -> rc == null || rc.touches(r));
-		ObjectMesher.Detail[] detail = new ObjectMesher.Detail[SCENERY_CELLS.length];
-		for (int i = 0; i < detail.length; i++)
-		{
-			detail[i] = new ObjectMesher.Detail(i == 0, i >= 2, simplify == Simplification.NONE ? 0 : SCENERY_CELLS[i],
-				simplify == Simplification.SIZE_AWARE || simplify == Simplification.SIZE_AWARE_SEALED,
-				simplify == Simplification.SIZE_AWARE_SEALED);
-		}
-		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, detail[level], rc));
+		scenery.setWorld(w.terrain, (r, level) -> objects.build(r, SCENERY_DETAIL[level], rc));
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;
 		builtLandmarks = lm;
-		builtSimplification = simplify;
 	}
 
 	private void initProgram()
