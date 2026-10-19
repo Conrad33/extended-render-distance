@@ -22,6 +22,7 @@ Requires the **GPU** plugin. It doesn't work with 117 HD.
 | Terrain distance | 5000 | How far the terrain is rendered, in tiles. Nothing is drawn beyond it. |
 | Structure distance | 5000 | How far structures (buildings, trees, etc) are rendered, in tiles. |
 | Scenery distance | 184 | How far scenery (grass, rocks, etc) is rendered, in tiles. Performance heavy. |
+| Performance Mode (Recommended) | On | Improves performance by simplifying distant geometry. Turn it off to see far-away shapes exactly (much slower). |
 
 All three go up to 5000 tiles, which takes in the whole world. If your frame rate drops, lower the scenery
 distance first, then the structure distance.
