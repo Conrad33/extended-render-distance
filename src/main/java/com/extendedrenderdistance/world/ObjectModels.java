@@ -27,6 +27,8 @@ final class ObjectModels
 		final float[] uvs;
 		final int[] textures;
 		final int faces;
+		/** Each face's depth bias (the model's), or null when none has one. */
+		byte[] biases;
 		/** How far the model reaches above its origin (local units, up positive). */
 		final int top;
 		/** The model's largest size across (local units), on any axis. */
@@ -76,7 +78,7 @@ final class ObjectModels
 	{
 		synchronized (lit)
 		{
-			if (lit.containsKey((long) d.getId() << 16 | type << 4 | orientation))
+			if (lit.containsKey((long) d.getId() << 24 | type << 4 | orientation))
 				return;
 		}
 		int[] ids = d.getObjectModels(), types = d.getObjectTypes();
@@ -107,7 +109,13 @@ final class ObjectModels
 	 */
 	Lit get(ObjectDefinition d, int type, int orientation)
 	{
-		long key = (long) d.getId() << 16 | type << 4 | orientation;
+		return get(d, type, orientation, 0);
+	}
+
+	/** As {@link #get(ObjectDefinition, int, int)}, posed as frame {@code frame} of its animation (if it has one). */
+	Lit get(ObjectDefinition d, int type, int orientation, int frame)
+	{
+		long key = (long) d.getId() << 24 | (long) frame << 9 | type << 4 | orientation;
 		Lit l;
 		synchronized (lit)
 		{
@@ -115,7 +123,7 @@ final class ObjectModels
 		}
 		if (l == null)
 		{
-			l = build(d, type, orientation);
+			l = build(d, type, orientation, frame);
 			if (l == null)
 				l = NONE;
 			synchronized (lit)
@@ -126,107 +134,215 @@ final class ObjectModels
 		return l == NONE ? null : l;
 	}
 
-	private Lit build(ObjectDefinition d, int type, int orientation)
+	/** Adds the model files of an object's model for a placement type to {@code out}, built or not. */
+	static void modelsOf(ObjectDefinition d, int type, java.util.Set<Integer> out)
+	{
+		int[] ids = modelIds(d, type);
+		if (ids != null)
+		{
+			for (int id : ids)
+				out.add(id);
+		}
+	}
+
+	/** The model ids an object shows for a placement type, or null when it has none for it. */
+	private static int[] modelIds(ObjectDefinition d, int type)
 	{
 		int[] ids = d.getObjectModels();
 		int[] types = d.getObjectTypes();
 		if (ids == null || ids.length == 0)
 			return null;
 		if (types == null)
+			return type == 10 ? ids : null;
+		for (int i = 0; i < types.length && i < ids.length; i++)
 		{
-			if (type != 10)
-				return null;
+			if (types[i] == type)
+				return new int[]{ids[i]};
 		}
-		else
-		{
-			int found = -1;
-			for (int i = 0; i < types.length; i++)
-			{
-				if (types[i] == type)
-				{
-					found = i;
-					break;
-				}
-			}
-			if (found < 0)
-				return null;
-			ids = new int[]{ids[found]};
-		}
+		return null;
+	}
+
+	private Lit build(ObjectDefinition d, int type, int orientation, int frame)
+	{
+		int[] ids = modelIds(d, type);
+		if (ids == null)
+			return null;
 		boolean mirror = d.isRotated() ^ orientation > 3;
+		// an animated object is posed as a frame of its animation shows it (the client never shows it unposed)
+		ObjectAnimation animation = cache.animation(d.getAnimationID());
+		ObjectAnimation.Frame anim = animation == null ? null : animation.frame(frame);
 
 		// each model built and lit on its own, then joined
-		float[][] parts = new float[ids.length][];
-		int[][] partColours = new int[ids.length][];
-		float[][] partUvs = new float[ids.length][];
-		int[][] partTextures = new int[ids.length][];
-		boolean textured = false;
-		int faces = 0, top = 0;
+		Lit[] parts = new Lit[ids.length];
 		for (int p = 0; p < ids.length; p++)
 		{
 			ModelDefinition m = cache.model(ids[p]);
 			if (m == null || m.faceCount == 0)
 				continue;
 			transform(m, d, mirror, orientation & 3);
-			int[] textures = m.faceTextures == null ? null : new int[m.faceCount * 3];
-			if (textures != null)
-				m.computeTextureUVCoordinates();
-			int[] colours = light(m, 64 + d.getAmbient(), 768 + d.getContrast(), textures);
-			float[] corners = new float[m.faceCount * 9];
-			float[] uvs = textures == null ? null : new float[m.faceCount * 6];
-			int kept = 0;
-			for (int f = 0; f < m.faceCount; f++)
+			if (anim != null)
+				anim.transparency(m);
+			parts[p] = part(m, d, anim, orientation & 3);
+		}
+		return join(parts);
+	}
+
+	/**
+	 * An object's model for a placement type and orientation shaped as it's placed, unlit (its normals worked out),
+	 * for the scene to merge with its neighbours' before it's lit ({@link #lit}); null when it has none, several, or
+	 * is animated (the client merges none of those).
+	 */
+	ModelDefinition shaped(ObjectDefinition d, int type, int orientation)
+	{
+		int[] ids = modelIds(d, type);
+		if (ids == null || ids.length != 1 || d.getAnimationID() >= 0)
+			return null;
+		ModelDefinition m = cache.model(ids[0]);
+		if (m == null || m.faceCount == 0)
+			return null;
+		transform(m, d, d.isRotated() ^ orientation > 3, orientation & 3);
+		m.computeNormals();
+		return m;
+	}
+
+	/** A {@link #shaped} model lit with the normals it has (merged with its neighbours'); null when nothing's drawn. */
+	Lit lit(ModelDefinition m, ObjectDefinition d)
+	{
+		return part(m, d, null, 0);
+	}
+
+	/** One shaped model lit (then posed by {@code anim}, if given), or null when it has nothing drawn. */
+	private Lit part(ModelDefinition m, ObjectDefinition d, ObjectAnimation.Frame anim, int turns)
+	{
+		int[] textures = m.faceTextures == null ? null : new int[m.faceCount * 3];
+		if (textures != null)
+			m.computeTextureUVCoordinates();
+		int[] colours = light(m, 64 + d.getAmbient(), 768 + d.getContrast(), textures);
+		if (anim != null)
+			pose(m, anim, turns);
+		float[] corners = new float[m.faceCount * 9];
+		float[] uvs = textures == null ? null : new float[m.faceCount * 6];
+		byte[] biases = m.faceZOffsets == null ? null : new byte[m.faceCount];
+		int kept = 0, top = 0;
+		for (int f = 0; f < m.faceCount; f++)
+		{
+			if (colours[f * 3] == Integer.MIN_VALUE)
+				continue;
+			int[] v = {m.faceIndices1[f], m.faceIndices2[f], m.faceIndices3[f]};
+			if (biases != null)
+				biases[kept] = m.faceZOffsets[f];
+			for (int k = 0; k < 3; k++)
 			{
-				if (colours[f * 3] == Integer.MIN_VALUE)
-					continue;
-				int[] v = {m.faceIndices1[f], m.faceIndices2[f], m.faceIndices3[f]};
-				for (int k = 0; k < 3; k++)
+				corners[kept * 9 + k * 3] = m.vertexX[v[k]];
+				corners[kept * 9 + k * 3 + 1] = m.vertexY[v[k]];
+				corners[kept * 9 + k * 3 + 2] = m.vertexZ[v[k]];
+				top = Math.max(top, -m.vertexY[v[k]]);
+				colours[kept * 3 + k] = colours[f * 3 + k];
+				if (textures != null)
 				{
-					corners[kept * 9 + k * 3] = m.vertexX[v[k]];
-					corners[kept * 9 + k * 3 + 1] = m.vertexY[v[k]];
-					corners[kept * 9 + k * 3 + 2] = m.vertexZ[v[k]];
-					top = Math.max(top, -m.vertexY[v[k]]);
-					colours[kept * 3 + k] = colours[f * 3 + k];
-					if (textures != null)
-					{
-						textures[kept * 3 + k] = textures[f * 3 + k];
-						float[] fu = m.faceTextureUCoordinates[f], fv = m.faceTextureVCoordinates[f];
-						uvs[kept * 6 + k * 2] = fu == null ? 0 : fu[k];
-						uvs[kept * 6 + k * 2 + 1] = fv == null ? 0 : fv[k];
-					}
+					textures[kept * 3 + k] = textures[f * 3 + k];
+					float[] fu = m.faceTextureUCoordinates[f], fv = m.faceTextureVCoordinates[f];
+					uvs[kept * 6 + k * 2] = fu == null ? 0 : fu[k];
+					uvs[kept * 6 + k * 2 + 1] = fv == null ? 0 : fv[k];
 				}
-				kept++;
 			}
-			parts[p] = java.util.Arrays.copyOf(corners, kept * 9);
-			partColours[p] = java.util.Arrays.copyOf(colours, kept * 3);
-			if (textures != null)
+			kept++;
+		}
+		if (kept == 0)
+			return null;
+		Lit lit = new Lit(java.util.Arrays.copyOf(corners, kept * 9), java.util.Arrays.copyOf(colours, kept * 3),
+			uvs == null ? null : java.util.Arrays.copyOf(uvs, kept * 6),
+			textures == null ? null : java.util.Arrays.copyOf(textures, kept * 3), kept, top);
+		if (biases != null)
+		{
+			for (int f = 0; f < kept; f++)
 			{
-				partUvs[p] = java.util.Arrays.copyOf(uvs, kept * 6);
-				partTextures[p] = java.util.Arrays.copyOf(textures, kept * 3);
-				textured = true;
+				if (biases[f] != 0)
+				{
+					lit.biases = java.util.Arrays.copyOf(biases, kept);
+					break;
+				}
 			}
-			faces += kept;
+		}
+		return lit;
+	}
+
+	/** Lit parts joined into one model (null parts left out); null when there's nothing. */
+	private static Lit join(Lit[] parts)
+	{
+		int faces = 0, top = 0;
+		boolean textured = false, biased = false;
+		Lit only = null;
+		int count = 0;
+		for (Lit p : parts)
+		{
+			if (p == null)
+				continue;
+			faces += p.faces;
+			top = Math.max(top, p.top);
+			textured |= p.textures != null;
+			biased |= p.biases != null;
+			only = p;
+			count++;
 		}
 		if (faces == 0)
 			return null;
+		if (count == 1)
+			return only;
 		float[] corners = new float[faces * 9];
 		int[] colours = new int[faces * 3];
 		float[] uvs = textured ? new float[faces * 6] : null;
 		int[] textures = textured ? new int[faces * 3] : null;
+		byte[] biases = biased ? new byte[faces] : null;
 		int at = 0;
-		for (int p = 0; p < parts.length; p++)
+		for (Lit p : parts)
 		{
-			if (parts[p] == null)
+			if (p == null)
 				continue;
-			System.arraycopy(parts[p], 0, corners, at * 9, parts[p].length);
-			System.arraycopy(partColours[p], 0, colours, at * 3, partColours[p].length);
-			if (partTextures[p] != null)
+			if (p.biases != null)
+				System.arraycopy(p.biases, 0, biases, at, p.faces);
+			System.arraycopy(p.corners, 0, corners, at * 9, p.faces * 9);
+			System.arraycopy(p.colours, 0, colours, at * 3, p.faces * 3);
+			if (p.textures != null)
 			{
-				System.arraycopy(partUvs[p], 0, uvs, at * 6, partUvs[p].length);
-				System.arraycopy(partTextures[p], 0, textures, at * 3, partTextures[p].length);
+				System.arraycopy(p.uvs, 0, uvs, at * 6, p.faces * 6);
+				System.arraycopy(p.textures, 0, textures, at * 3, p.faces * 3);
 			}
-			at += parts[p].length / 9;
+			at += p.faces;
 		}
-		return new Lit(corners, colours, uvs, textures, faces, top);
+		Lit joined = new Lit(corners, colours, uvs, textures, faces, top);
+		joined.biases = biases;
+		return joined;
+	}
+
+	/** Poses a lit model, as the client does: turned back to how the animation was made, posed, turned again. */
+	private static void pose(ModelDefinition m, ObjectAnimation.Frame anim, int turns)
+	{
+		// turning forgets the texture coordinates worked out unposed, which the client keeps
+		float[][] u = m.faceTextureUCoordinates, v = m.faceTextureVCoordinates;
+		turn(m, 4 - turns & 3);
+		try
+		{
+			anim.pose(m);
+		}
+		catch (RuntimeException e)
+		{
+			// a frame for another model's skeleton: left unposed
+			m.resetAnim();
+		}
+		turn(m, turns);
+		m.faceTextureUCoordinates = u;
+		m.faceTextureVCoordinates = v;
+	}
+
+	private static void turn(ModelDefinition m, int turns)
+	{
+		if (turns == 1)
+			m.rotate1();
+		else if (turns == 2)
+			m.rotate2();
+		else if (turns == 3)
+			m.rotate3();
 	}
 
 	/** Mirror, turn, recolour, retexture, scale and offset, as the client does before lighting. */
@@ -240,12 +356,7 @@ final class ObjectModels
 			m.faceIndices1 = m.faceIndices3;
 			m.faceIndices3 = t;
 		}
-		if (turns == 1)
-			m.rotate1();
-		else if (turns == 2)
-			m.rotate2();
-		else if (turns == 3)
-			m.rotate3();
+		turn(m, turns);
 		short[] find = d.getRecolorToFind(), replace = d.getRecolorToReplace();
 		if (find != null && replace != null && m.faceColors != null)
 		{

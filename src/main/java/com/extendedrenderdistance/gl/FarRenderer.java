@@ -27,11 +27,11 @@ import static org.lwjgl.opengl.GL33C.*;
  * terrain distance (levels of detail), all scenery out to the scenery distance and buildings and
  * tall things out to the building distance (each a {@link RegionLayer}).
  * <p>
- * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has cleared its
- * framebuffer and drawn the sky, before the scene. It uses the GPU plugin's exact projection and shares its depth
+ * It runs inside the GPU plugin's scene pass (see {@link CallbacksWrapper}): after the GPU plugin has drawn the sky
+ * and the scene's solid zones, before anything see-through. It uses the GPU plugin's exact projection and shares its depth
  * buffer, with its depth pushed back a little so the real scene always wins where both draw; it leaves out whatever
  * the game draws itself (see {@link DrawnZones}): every object and floor in a zone the GPU plugin drew, and the
- * ground there but for a zone's overlap at the edge, so nothing is ever drawn twice. The GPU plugin's
+ * ground there but for 2 tiles at the edge, so nothing is ever drawn twice. The GPU plugin's
  * fog at the edge of its view is turned off (it would show as a ring of sky). Every bit of GL state it touches is put
  * back. Client thread, inside the GPU plugin's GL context.
  */
@@ -68,7 +68,17 @@ public class FarRenderer
 	private volatile WorldCache world;
 	private WorldCache builtFor;
 	private int builtScenery = -1, builtLandmarks = -1;
-	private boolean builtSimplify;
+	private boolean builtSimplify, builtAnimate, builtLowDetail, builtShadows;
+	/** Reads the objects' model heights the ground's shadows need, in the background. */
+	private final java.util.concurrent.ExecutorService heightReader = java.util.concurrent.Executors
+		.newSingleThreadExecutor(r ->
+		{
+			Thread t = new Thread(r, "Render distance shadows");
+			t.setDaemon(true);
+			t.setPriority(Thread.NORM_PRIORITY - 1);
+			return t;
+		});
+	private WorldCache heightsAskedFor;
 	/** The part of the map drawn, and the one being worked out for where the player is now. */
 	private Reach reach, builtReach;
 	private CompletableFuture<Reach> nextReach;
@@ -80,10 +90,11 @@ public class FarRenderer
 	 */
 	private Reach refreshedFrom, nextRefreshes;
 	private RegionLayer terrain, scenery;
+	private AnimatedObjects animated;
 
 	/** The GL context our objects belong to; when the GPU plugin restarts, it's a new one. */
 	private GLCapabilities caps;
-	private int program, uniProj, uniOffset, uniBrightness, uniViewEnd, uniDepthScale;
+	private int program, uniProj, uniOffset, uniBrightness, uniViewEnd, uniDepthScale, uniInstanced;
 	private int uniZones, uniZonesOrigin, maskTexture;
 	private int uniTextures, uniTexturesOn, uniTextureEnd, uniTick, uniTextureAnimations;
 	private int uniTextureLightMode, uniSmoothBanding;
@@ -123,6 +134,7 @@ public class FarRenderer
 			// a new context (first frame, or the GPU plugin restarted): the old one's objects are gone with it
 			caps = current;
 			terrain = scenery = null;
+			animated = null;
 			builtFor = null;
 			fogProgram = -1;
 			try
@@ -159,6 +171,8 @@ public class FarRenderer
 		int prevVao = glGetInteger(GL_VERTEX_ARRAY_BINDING);
 		int prevBuffer = glGetInteger(GL_ARRAY_BUFFER_BINDING);
 		boolean blend = glIsEnabled(GL_BLEND), cull = glIsEnabled(GL_CULL_FACE), depth = glIsEnabled(GL_DEPTH_TEST);
+		int blendSrc = glGetInteger(GL_BLEND_SRC_RGB), blendDst = glGetInteger(GL_BLEND_DST_RGB);
+		int blendSrcA = glGetInteger(GL_BLEND_SRC_ALPHA), blendDstA = glGetInteger(GL_BLEND_DST_ALPHA);
 		int depthFunc = glGetInteger(GL_DEPTH_FUNC);
 		boolean depthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
 		int prevUnit = glGetInteger(GL_ACTIVE_TEXTURE);
@@ -169,6 +183,8 @@ public class FarRenderer
 		try
 		{
 			glDisable(GL_BLEND);
+			glVertexAttrib1f(4, 0f);
+			glVertexAttrib1f(7, 0f);
 			glDisable(GL_CULL_FACE);
 			glEnable(GL_DEPTH_TEST);
 			glDepthFunc(GL_GREATER);
@@ -200,6 +216,7 @@ public class FarRenderer
 			// (simplifying far away can bring them together)
 			glEnable(GL_CULL_FACE);
 			scenery.draw(proj, camX, camY, camZ, baseX, baseY, uniOffset, view, hole);
+			animated.draw(scenery.drawnAnimated(), camY, client.getGameCycle(), uniOffset, uniInstanced);
 		}
 		finally
 		{
@@ -208,6 +225,7 @@ public class FarRenderer
 			glBindBuffer(GL_ARRAY_BUFFER, prevBuffer);
 			glUseProgram(prevProgram);
 			setEnabled(GL_BLEND, blend);
+			glBlendFuncSeparate(blendSrc, blendDst, blendSrcA, blendDstA);
 			setEnabled(GL_CULL_FACE, cull);
 			setEnabled(GL_DEPTH_TEST, depth);
 			glDepthFunc(depthFunc);
@@ -217,17 +235,26 @@ public class FarRenderer
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, prevUnpack);
 		}
 
-		if (prevProgram != 0)
+	}
+
+	/**
+	 * Turns the GPU plugin's fog at the edge of its view off (it would show as a ring of sky against the far world),
+	 * once its program is bound and its uniforms set for the frame, before it draws the scene.
+	 */
+	public void fogOff()
+	{
+		if (failed || world == null || caps != GL.getCapabilities())
+			return;
+		int program = glGetInteger(GL_CURRENT_PROGRAM);
+		if (program == 0)
+			return;
+		if (program != fogProgram)
 		{
-			// the GPU plugin's program is bound again and its uniforms are set for this frame: turn its edge fog off
-			if (prevProgram != fogProgram)
-			{
-				fogProgram = prevProgram;
-				uniUseFog = glGetUniformLocation(prevProgram, "useFog");
-			}
-			if (uniUseFog >= 0)
-				glUniform1i(uniUseFog, 0);
+			fogProgram = program;
+			uniUseFog = glGetUniformLocation(program, "useFog");
 		}
+		if (uniUseFog >= 0)
+			glUniform1i(uniUseFog, 0);
 	}
 
 	/** Whether every zone of a map square is drawn by the game itself. */
@@ -303,9 +330,33 @@ public class FarRenderer
 	private void layers(WorldCache w)
 	{
 		int sc = config.sceneryDistance(), lm = Math.max(sc, config.structureDistance());
-		boolean simplify = config.performanceMode();
+		boolean simplify = config.performanceMode(), animate = config.animations(), lowDetail = lowDetail();
 		boolean distances = sc != builtScenery || lm != builtLandmarks;
-		if (w == builtFor && reach == builtReach && !distances && simplify == builtSimplify && terrain != null)
+		boolean objectsChanged = animate != builtAnimate || lowDetail != builtLowDetail;
+		// the ground's shadows once the heights they need are read (in the background: the ground is drawn without
+		// them meanwhile, then built again with them)
+		if (w != heightsAskedFor)
+		{
+			heightsAskedFor = w;
+			heightReader.execute(() ->
+			{
+				try
+				{
+					w.readModelHeights();
+				}
+				catch (InterruptedException e)
+				{
+					Thread.currentThread().interrupt();
+				}
+				catch (RuntimeException e)
+				{
+					log.warn("Extended Render Distance: couldn't read the shadows' heights", e);
+				}
+			});
+		}
+		boolean shadowed = w.modelHeightsRead();
+		if (w == builtFor && reach == builtReach && !distances && simplify == builtSimplify && !objectsChanged
+			&& shadowed == builtShadows && terrain != null)
 			return;
 		Reach rc = reach;
 		Reach was = builtReach;
@@ -314,9 +365,9 @@ public class FarRenderer
 		int[] tex = texColours;
 		// performance mode: coarser ground further away; without it, every tile everywhere
 		RegionLayer.Builder ground = (r, level) -> TerrainMesher.build(w.terrain, r,
-			simplify ? TERRAIN_STEPS[level] : 1, tex, rc);
+			simplify ? TERRAIN_STEPS[level] : 1, tex, rc, shadowed ? shadows(w, r) : null);
 		double[] groundRanges = simplify ? TERRAIN_RANGES : FULL_RANGE;
-		ObjectMesher objects = new ObjectMesher(w, texColours);
+		ObjectMesher objects = new ObjectMesher(w, texColours, animate, lowDetail);
 		ObjectMesher.Detail[] detail = simplify ? SCENERY_DETAIL : unsimplified();
 		RegionLayer.Builder things = (r, level) -> objects.build(r, detail[level], rc);
 
@@ -333,6 +384,8 @@ public class FarRenderer
 			update(terrain, w, rc, was, ground);
 			if (simplify != builtSimplify)
 				terrain.setLevels(groundRanges, simplify, ground);
+			else if (shadowed && !builtShadows)
+				terrain.rebuild(r -> true, ground);
 		}
 
 		// everything exactly up close, then (performance mode) simplified out to the scenery distance, then buildings
@@ -353,14 +406,42 @@ public class FarRenderer
 			// the distances only pick which level is drawn where: what's built stays right
 			if (distances || simplify != builtSimplify)
 				scenery.setRanges(ranges);
-			if (simplify != builtSimplify)
+			if (simplify != builtSimplify || objectsChanged)
 				scenery.rebuild(r -> true, things);
 		}
+		if (animated == null)
+			animated = new AnimatedObjects();
+		animated.setMesher(objects);
 		builtFor = w;
 		builtReach = rc;
 		builtScenery = sc;
 		builtLandmarks = lm;
 		builtSimplify = simplify;
+		builtAnimate = animate;
+		builtLowDetail = lowDetail;
+		builtShadows = shadowed;
+	}
+
+	/** Whether the Low Detail plugin has the game in its low detail mode. */
+	private boolean lowDetail()
+	{
+		return "true".equals(configManager.getConfiguration("runelite", "lowmemoryplugin"))
+			&& !"false".equals(configManager.getConfiguration("lowmemory", "lowDetail"));
+	}
+
+	/** The shadows on a square's ground (null if reading them was stopped). Worker threads. */
+	private static com.extendedrenderdistance.world.Shadows shadows(WorldCache w,
+		com.extendedrenderdistance.world.WorldTerrain.Region r)
+	{
+		try
+		{
+			return com.extendedrenderdistance.world.Shadows.of(w, r);
+		}
+		catch (InterruptedException e)
+		{
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("stopped", e);
+		}
 	}
 
 	/** Moves a layer on to more of the world and the reach worked out again for it. */
@@ -477,6 +558,7 @@ public class FarRenderer
 		uniTextureAnimations = glGetUniformLocation(program, "textureAnimations");
 		uniTextureLightMode = glGetUniformLocation(program, "textureLightMode");
 		uniSmoothBanding = glGetUniformLocation(program, "smoothBanding");
+		uniInstanced = glGetUniformLocation(program, "instanced");
 	}
 
 	/** The client's colour for each texture (packed HSL): water, lava and so on. */
@@ -501,12 +583,15 @@ public class FarRenderer
 				terrain.free();
 			if (scenery != null)
 				scenery.free();
+			if (animated != null)
+				animated.free();
 			if (program != 0)
 				glDeleteProgram(program);
 			if (maskTexture != 0)
 				glDeleteTextures(maskTexture);
 		}
 		terrain = scenery = null;
+		animated = null;
 		builtFor = null;
 		caps = null;
 		program = 0;

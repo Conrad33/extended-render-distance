@@ -38,10 +38,19 @@ public final class TerrainMesher
 		public final int count;
 		public final boolean shortIndices;
 		public final int minHeight, maxHeight;
+		/** Bytes a vertex: {@link #STRIDE}, or with transparency {@link VertexSink#TRANSLUCENT_STRIDE}. */
+		public final int stride;
+		/** The see-through faces, drawn after everything solid; null for none. */
+		public Built translucent;
+		/** Solid faces drawn with a depth bias (decals), in the see-through layout; null for none. */
+		public Built biased;
+		/** Objects left out to be drawn playing their animations; null for none. */
+		public java.util.List<ObjectMesher.Animated> animated;
 
 		public Built(WorldTerrain.Region region, int step, ByteBuffer vertices, int vertexCount, ByteBuffer indices,
-			int count, boolean shortIndices, int minHeight, int maxHeight)
+			int count, boolean shortIndices, int minHeight, int maxHeight, int stride)
 		{
+			this.stride = stride;
 			this.region = region;
 			this.step = step;
 			this.vertices = vertices;
@@ -59,6 +68,13 @@ public final class TerrainMesher
 	 */
 	public static Built build(WorldTerrain world, WorldTerrain.Region r, int step, int[] textureColours, Reach reach)
 	{
+		return build(world, r, step, textureColours, reach, null);
+	}
+
+	/** As {@link #build(WorldTerrain, WorldTerrain.Region, int, int[], Reach)}, darkened by these shadows (or none). */
+	public static Built build(WorldTerrain world, WorldTerrain.Region r, int step, int[] textureColours, Reach reach,
+		Shadows shadows)
+	{
 		int n = 64 / step;
 		int bx = r.baseX(), by = r.baseY();
 		int[] h = new int[(n + 1) * (n + 1)];
@@ -75,7 +91,8 @@ public final class TerrainMesher
 				max = Math.max(max, v);
 				int dx = world.height(wx + step, wy, r) - world.height(wx - step, wy, r);
 				int dz = world.height(wx, wy + step, r) - world.height(wx, wy - step, r);
-				lit[i * (n + 1) + j] = light(dx, dz, step);
+				int shadow = shadows == null ? 0 : shadows.at(wx, wy);
+				lit[i * (n + 1) + j] = (lightLevel(dx, dz, step) - shadow) / 128.0;
 			}
 		}
 
@@ -181,16 +198,14 @@ public final class TerrainMesher
 			return;
 		// corners: south-west, south-east, north-east, north-west
 		int[] ci = {i * 65 + j, (i + 1) * 65 + j, (i + 1) * 65 + j + 1, i * 65 + j + 1};
-		int[][] cornerTile = {{wx, wy}, {wx + 1, wy}, {wx + 1, wy + 1}, {wx, wy + 1}};
 		float[] ch = new float[4];
 		double[] cl = new double[4];
-		int[] cu = new int[4];
+		// as the client: the tile's own (blended) underlay at every corner, lit by each corner's light
+		int[] cu = {under, under, under, under};
 		for (int k = 0; k < 4; k++)
 		{
 			ch[k] = h[ci[k]];
 			cl[k] = lit[ci[k]];
-			int u = world.underlay(cornerTile[k][0], cornerTile[k][1]);
-			cu[k] = u == WorldTerrain.VOID ? under : u;
 		}
 		float x0 = i * TILE, z0 = j * TILE;
 
@@ -222,55 +237,34 @@ public final class TerrainMesher
 			return;
 		}
 
-		// part overlay: sixteen cells, each overlay or underlay as the shape says
-		boolean[] mask = TileShapes.mask(path, world.overlayRotation(wx, wy));
+		// part overlay: the client's shaped tile, triangle by triangle, each overlay or underlay; its points take
+		// their height, colour and light from the corners as the client's do
 		int oc = over == WorldTerrain.HOLE ? WorldTerrain.VOID : resolve(over, textureColours);
 		boolean textured = WorldTerrain.isTextured(over);
-		float[] x = new float[4], y = new float[4], z = new float[4];
-		int[] c = new int[4];
-		float[] tu = new float[4], tv = new float[4];
-		int[] tex = new int[4];
-		for (int row = 0; row < 4; row++)
+		int shape = TileModels.shape(path), rotation = world.overlayRotation(wx, wy);
+		int[] points = TileModels.points(shape, rotation), faces = TileModels.faces(shape, rotation);
+		int[] cornerHeight = new int[4], underColour = new int[4], overColour = new int[4];
+		for (int k = 0; k < 4; k++)
 		{
-			for (int col = 0; col < 4; col++)
+			cornerHeight[k] = (int) ch[k];
+			underColour[k] = under == WorldTerrain.VOID ? 0 : shade(under, cl[k]);
+			overColour[k] = oc == WorldTerrain.VOID ? 0 : shade(oc, cl[k]);
+		}
+		for (int f = 0; f < faces.length; f += 4)
+		{
+			boolean overlay = faces[f] == 1;
+			// (a tile with no underlay leaves its underlay part out, as the client does)
+			if (overlay ? oc == WorldTerrain.VOID : under == WorldTerrain.VOID)
+				continue;
+			for (int k = 1; k <= 3; k++)
 			{
-				boolean overlay = mask[row * 4 + col];
-				if (overlay ? oc == WorldTerrain.VOID : under == WorldTerrain.VOID)
-					continue;
-				// fractions across the tile: east u, north v (row 0 is the north edge)
-				double[] us = {col / 4.0, (col + 1) / 4.0, (col + 1) / 4.0, col / 4.0};
-				double[] vs = {1 - (row + 1) / 4.0, 1 - (row + 1) / 4.0, 1 - row / 4.0, 1 - row / 4.0};
-				for (int k = 0; k < 4; k++)
-				{
-					double u = us[k], v = vs[k];
-					x[k] = x0 + (float) (u * TILE);
-					z[k] = z0 + (float) (v * TILE);
-					y[k] = (float) bilinear(ch[0], ch[1], ch[2], ch[3], u, v);
-					double l = bilinear(cl[0], cl[1], cl[2], cl[3], u, v);
-					c[k] = shade(overlay ? oc : blendHsl(cu, u, v), l);
-					tu[k] = (float) u;
-					tv[k] = (float) v;
-					tex[k] = overlay && textured ? texture(over, l) : 0;
-				}
-				sink.quad(x, y, z, c, tu, tv, tex);
+				int code = points[faces[f + k]];
+				float u = TileModels.east(code), v = TileModels.north(code);
+				int colour = TileModels.of(code, overlay ? overColour : underColour);
+				int tex = overlay && textured ? texture(over, TileModels.light(code, cl)) : 0;
+				sink.put(x0 + u * TILE, TileModels.of(code, cornerHeight), z0 + v * TILE, colour, u, v, tex);
 			}
 		}
-	}
-
-	/** Bilinear across a tile's corners (south-west, south-east, north-east, north-west). */
-	private static double bilinear(double sw, double se, double ne, double nw, double u, double v)
-	{
-		double south = sw + (se - sw) * u, north = nw + (ne - nw) * u;
-		return south + (north - south) * v;
-	}
-
-	/** Packed HSL blended across the corners, component by component. */
-	private static int blendHsl(int[] c, double u, double v)
-	{
-		double hue = bilinear(c[0] >> 10 & 63, c[1] >> 10 & 63, c[2] >> 10 & 63, c[3] >> 10 & 63, u, v);
-		double sat = bilinear(c[0] >> 7 & 7, c[1] >> 7 & 7, c[2] >> 7 & 7, c[3] >> 7 & 7, u, v);
-		double lum = bilinear(c[0] & 127, c[1] & 127, c[2] & 127, c[3] & 127, u, v);
-		return (int) Math.round(hue) << 10 | (int) Math.round(sat) << 7 | (int) Math.round(lum);
 	}
 
 	/** A hanging quad under the grid edge from corner (i0, j0) to (i1, j1), coloured as quad (qi, qj). */
@@ -294,11 +288,17 @@ public final class TerrainMesher
 	 */
 	static double light(int dx, int dz, int step)
 	{
+		return lightLevel(dx, dz, step) / 128.0;
+	}
+
+	/** The client's terrain light itself (before shadows): 84 on the flat. */
+	static int lightLevel(int dx, int dz, int step)
+	{
 		int span = 256 * step;
 		int len = (int) Math.sqrt((double) dx * dx + (double) span * span + (double) dz * dz);
 		int nx = (dx << 8) / len, ny = (span << 8) / len, nz = (dz << 8) / len;
 		// 213 is the light's length (71) times 768 over 256
-		return (96 + (-50 * nx - 10 * ny - 50 * nz) / 213) / 128.0;
+		return 96 + (-50 * nx - 10 * ny - 50 * nz) / 213;
 	}
 
 	/** The client's lightness times the light, rounded down as the client does. */

@@ -69,8 +69,8 @@ final class Shaders
 	 * repeated tile by tile when bit 15 is set) scrolled as the GPU plugin animates it;
 	 * depth pushed back by depthScale so the real scene wins ties, and pulled forward a hair per priority level so a
 	 * detail (a window) wins over the face it lies on even where far simplification has flattened the two together;
-	 * nothing the game draws itself (scenery whose tile is in a zone the GPU plugin drew; ground well inside them,
-	 * a zone's overlap left so their edges meet); nothing past the terrain distance.
+	 * nothing the game draws itself (scenery whose tile is in a zone the GPU plugin drew; ground inside them but
+	 * for 2 tiles at their edge, so the two meet); nothing past the terrain distance.
 	 */
 	static final String FAR_VERT = String.join("\n",
 		"#version 330",
@@ -78,6 +78,14 @@ final class Shaders
 		"layout(location = 1) in int colour;",
 		"layout(location = 2) in vec2 uv;",
 		"layout(location = 3) in int texInfo;",
+		// 0 (opaque) where it isn't given: a disabled attribute reads 0
+		"layout(location = 4) in float transparency;",
+		// the model's depth bias: drawn that much nearer, as the GPU plugin does (decals over what they lie on)
+		"layout(location = 7) in float bias;",
+		// an animated object's instance: where it stands (camera-relative) and its yaw, and its tile's centre
+		"layout(location = 5) in vec4 instance;",
+		"layout(location = 6) in vec2 instanceTile;",
+		"uniform int instanced;",
 		"uniform mat4 proj;",
 		"uniform vec3 offset;",
 		"uniform float brightness;",
@@ -94,18 +102,29 @@ final class Shaders
 		"out vec3 fTexTint;",
 		"noperspective centroid out vec3 fHsl;",
 		"flat out int fTexture;",
+		"out float fOpacity;",
 		HSL_TO_RGB,
 		"void main() {",
 		"  vec3 p = pos + offset;",
+		"  if (instanced == 1) {",
+		"    float s = sin(instance.w), k = cos(instance.w);",
+		"    p = vec3(pos.x * k + pos.z * s, pos.y, pos.z * k - pos.x * s) + instance.xyz + offset;",
+		"  }",
 		"  vec4 c = proj * vec4(p, 1.0);",
 		"  c.z *= depthScale * (1.0 + float(colour >> 16 & 7) * 0.0002);",
+		"  c.z += bias / 128.0;",
 		"  int a = colour >> 19 & 8191;",
 		"  fAnchored = a > 0 ? 1 : 0;",
 		"  a = max(a - 1, 0);",
 		"  fAnchor = offset.xz + vec2(float(a >> 6) * 128.0 + 64.0, float(a & 63) * 128.0 + 64.0);",
+		"  if (instanced == 1) {",
+		"    fAnchored = 1;",
+		"    fAnchor = instanceTile;",
+		"  }",
 		"  gl_Position = c;",
 		"  fColour = hslToRgb(colour & 65535, brightness);",
 		"  fPos = p;",
+		"  fOpacity = 1.0 - transparency / 255.0;",
 		"  int id = texInfo & 255;",
 		"  fTexture = id | ((texInfo & 0x8000) != 0 ? 0x100 : 0);",
 		"  fTexLight = float(texInfo >> 8 & 127) / 127.0;",
@@ -126,6 +145,7 @@ final class Shaders
 		"in vec3 fTexTint;",
 		"noperspective centroid in vec3 fHsl;",
 		"flat in int fTexture;",
+		"in float fOpacity;",
 		"uniform sampler2D drawnZones;",
 		"uniform vec2 zonesOrigin;",
 		"uniform float viewEnd;",
@@ -145,8 +165,8 @@ final class Shaders
 		"void main() {",
 		"  if (fAnchored == 1) {",
 		"    if (drawn(fAnchor)) discard;",
-		"  } else if (drawn(fPos.xz) && drawn(fPos.xz + vec2(1024.0, 0.0)) && drawn(fPos.xz - vec2(1024.0, 0.0))",
-		"      && drawn(fPos.xz + vec2(0.0, 1024.0)) && drawn(fPos.xz - vec2(0.0, 1024.0))) discard;",
+		"  } else if (drawn(fPos.xz) && drawn(fPos.xz + vec2(256.0, 0.0)) && drawn(fPos.xz - vec2(256.0, 0.0))",
+		"      && drawn(fPos.xz + vec2(0.0, 256.0)) && drawn(fPos.xz - vec2(0.0, 256.0))) discard;",
 		"  float dist = length(fPos.xz);",
 		"  if (dist > viewEnd) discard;",
 		// as the GPU plugin: the smoothly blended colour, or with smooth banding off the colour blended in steps (hue,
@@ -168,6 +188,6 @@ final class Shaders
 		"    vec3 lit = pow(t, vec3(brightness)) * mix(vec3(fTexLight), fTexTint, textureLightMode);",
 		"    colour = mix(lit, colour, smoothstep(textureEnd * 0.85, textureEnd, dist));",
 		"  }",
-		"  frag = vec4(colour, 1.0);",
+		"  frag = vec4(colour, fOpacity);",
 		"}");
 }

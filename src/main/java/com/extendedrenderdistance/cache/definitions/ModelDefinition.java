@@ -54,7 +54,7 @@ public class ModelDefinition
 
 	public transient int maxPriority;
 
-	public static transient int animOffsetX, animOffsetY, animOffsetZ;
+	private transient int animOffsetX, animOffsetY, animOffsetZ;
 
 	public void computeNormals()
 	{

@@ -1,5 +1,6 @@
 package com.extendedrenderdistance.gl;
 
+import com.extendedrenderdistance.world.ObjectMesher;
 import com.extendedrenderdistance.world.TerrainMesher;
 import com.extendedrenderdistance.world.WorldTerrain;
 import java.lang.ref.Reference;
@@ -43,10 +44,16 @@ final class RegionLayer
 		this.filter = filter;
 	}
 
-	private static final class Mesh
+	static final class Mesh
 	{
-		int vao, vbo, ebo, count, minHeight, maxHeight;
+		int vao, vbo, ebo, count, minHeight, maxHeight, stride;
 		boolean shortIndices;
+		/** The square's see-through faces, or null. */
+		Mesh translucent;
+		/** The square's depth-biased solid faces (decals), or null. */
+		Mesh biased;
+		/** The square's objects drawn playing their animations, or null. */
+		List<ObjectMesher.Animated> animated;
 	}
 
 	private static final class Slot
@@ -103,6 +110,10 @@ final class RegionLayer
 	private final int maxInFlight, uploadsPerFrame;
 	private final ExecutorService workers;
 	private final ConcurrentLinkedQueue<Object[]> built = new ConcurrentLinkedQueue<>();
+	/** This frame's see-through meshes to draw: mesh, offset x and z, distance. */
+	private final List<Object[]> seeThrough = new ArrayList<>();
+	/** This frame's drawn squares' animated objects: the objects, offset x and z. */
+	private final List<Object[]> drawnAnimated = new ArrayList<>();
 	private final AtomicInteger inFlight = new AtomicInteger();
 	private final Map<WorldTerrain.Region, Slot> slots = new IdentityHashMap<>();
 	private volatile int generation;
@@ -211,6 +222,7 @@ final class RegionLayer
 	void draw(float[] proj, float cx, float cy, float cz, int baseX, int baseY, int uniOffset, double maxDistance,
 		java.util.function.Predicate<WorldTerrain.Region> hidden)
 	{
+		drawnAnimated.clear();
 		if (world == null || builder == null)
 			return;
 		upload();
@@ -246,15 +258,9 @@ final class RegionLayer
 
 			if (everywhere && slot.wants(levels() - 1))
 				wanted.add(new Object[]{r, levels() - 1, dist, true});
-			float ox = (r.baseX() - baseX) * 128f - cx, oz = (r.baseY() - baseY) * 128f - cz;
-			Mesh any = best(slot, level);
-			boolean visible = any == null || visible(proj, ox, any.minHeight - cy, any.maxHeight - cy, oz);
-			// squares out of view are built only to replace meshes gone stale (after those in view), so a world update or
-			// a change of levels finishes, and lets go of the old meshes, without looking all round
-			if (slot.wants(level) && (visible || slot.anyStale()))
-				wanted.add(new Object[]{r, level, visible ? dist : dist + OUT_OF_VIEW, false});
 			// once the level wanted is built, the old ones stood in for it go; finer levels than needed go once
-			// well out of their range
+			// well out of their range (before picking what's drawn: a mesh let go
+			// must never be drawn, its buffers' names are given out again)
 			boolean ready = slot.meshes[level] != null && !slot.stale[level];
 			for (int l = 0; l < slot.meshes.length; l++)
 			{
@@ -268,14 +274,61 @@ final class RegionLayer
 				else if (l < level && dist > ranges[l] * 1.25)
 					freeMesh(slot, l);
 			}
-			if (any == null || !visible || skip || any.count == 0)
+			float ox = (r.baseX() - baseX) * 128f - cx, oz = (r.baseY() - baseY) * 128f - cz;
+			Mesh any = best(slot, level);
+			boolean visible = any == null || visible(proj, ox, any.minHeight - cy, any.maxHeight - cy, oz);
+			// squares out of view are built only to replace meshes gone stale (after those in view), so a world update or
+			// a change of levels finishes, and lets go of the old meshes, without looking all round
+			if (slot.wants(level) && (visible || slot.anyStale()))
+				wanted.add(new Object[]{r, level, visible ? dist : dist + OUT_OF_VIEW, false});
+			if (any == null || !visible || skip)
 				continue;
+			if (any.animated != null)
+				drawnAnimated.add(new Object[]{any.animated, ox, oz});
+			if (any.translucent != null)
+				seeThrough.add(new Object[]{any.translucent, ox, oz, dist});
 			glUniform3f(uniOffset, ox, -cy, oz);
-			glBindVertexArray(any.vao);
-			glDrawElements(GL_TRIANGLES, any.count, any.shortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, 0);
+			if (any.count > 0 && any.vao != 0)
+			{
+				glBindVertexArray(any.vao);
+				glDrawElements(GL_TRIANGLES, any.count, any.shortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, 0);
+			}
+			Mesh decals = any.biased;
+			if (decals != null && decals.count > 0 && decals.vao != 0)
+			{
+				glBindVertexArray(decals.vao);
+				glDrawElements(GL_TRIANGLES, decals.count, decals.shortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, 0);
+			}
+		}
+		if (!seeThrough.isEmpty())
+		{
+			// as the GPU plugin draws its see-through faces: after everything solid, blended over it, without hiding
+			// what's behind them; furthest squares first
+			seeThrough.sort((a, b) -> Double.compare((double) b[3], (double) a[3]));
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDepthMask(false);
+			for (Object[] s : seeThrough)
+			{
+				Mesh m = (Mesh) s[0];
+				if (m.vao == 0)
+					continue;
+				glUniform3f(uniOffset, (float) s[1], -cy, (float) s[2]);
+				glBindVertexArray(m.vao);
+				glDrawElements(GL_TRIANGLES, m.count, m.shortIndices ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, 0);
+			}
+			glDepthMask(true);
+			glDisable(GL_BLEND);
+			seeThrough.clear();
 		}
 		glBindVertexArray(0);
 		request(wanted);
+	}
+
+	/** The animated objects of the squares drawn last ({@link #draw}): each the objects, offset x and z. */
+	List<Object[]> drawnAnimated()
+	{
+		return drawnAnimated;
 	}
 
 	private int level(double dist)
@@ -400,44 +453,71 @@ final class RegionLayer
 				continue;
 			slot.pending[level] = false;
 			freeMesh(slot, level);
-			Mesh m = new Mesh();
-			m.count = b.count;
-			m.shortIndices = b.shortIndices;
-			m.minHeight = b.minHeight;
-			m.maxHeight = b.maxHeight;
-			if (b.count > 0)
-			{
-				m.vao = glGenVertexArrays();
-				m.vbo = glGenBuffers();
-				glBindVertexArray(m.vao);
-				glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
-				glBufferData(GL_ARRAY_BUFFER, b.vertices, GL_STATIC_DRAW);
-				// the index buffer is part of the vertex array's state: bound after it
-				m.ebo = glGenBuffers();
-				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
-				glBufferData(GL_ELEMENT_ARRAY_BUFFER, b.indices, GL_STATIC_DRAW);
-				// the driver reads the buffers' memory during the calls: they must not be collected (and freed) before
-				Reference.reachabilityFence(b.vertices);
-				Reference.reachabilityFence(b.indices);
-				glVertexAttribPointer(0, 3, GL_SHORT, false, TerrainMesher.STRIDE, 0);
-				glEnableVertexAttribArray(0);
-				glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, TerrainMesher.STRIDE, 6);
-				glEnableVertexAttribArray(3);
-				glVertexAttribIPointer(1, 1, GL_INT, TerrainMesher.STRIDE, 8);
-				glEnableVertexAttribArray(1);
-				glVertexAttribPointer(2, 2, GL_SHORT, false, TerrainMesher.STRIDE, 12);
-				glEnableVertexAttribArray(2);
-				glBindVertexArray(0);
-				glBindBuffer(GL_ARRAY_BUFFER, 0);
-			}
+			Mesh m = mesh(b);
+			if (b.translucent != null)
+				m.translucent = mesh(b.translucent);
+			if (b.biased != null)
+				m.biased = mesh(b.biased);
+			m.animated = b.animated;
 			slot.meshes[level] = m;
 		}
+	}
+
+	/** A built mesh into GL buffers (GL thread). */
+	static Mesh mesh(TerrainMesher.Built b)
+	{
+		Mesh m = new Mesh();
+		m.count = b.count;
+		m.stride = b.stride;
+		m.shortIndices = b.shortIndices;
+		m.minHeight = b.minHeight;
+		m.maxHeight = b.maxHeight;
+		if (b.count > 0)
+		{
+			m.vao = glGenVertexArrays();
+			m.vbo = glGenBuffers();
+			glBindVertexArray(m.vao);
+			glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
+			glBufferData(GL_ARRAY_BUFFER, b.vertices, GL_STATIC_DRAW);
+			// the index buffer is part of the vertex array's state: bound after it
+			m.ebo = glGenBuffers();
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, b.indices, GL_STATIC_DRAW);
+			// the driver reads the buffers' memory during the calls: they must not be collected (and freed) before
+			Reference.reachabilityFence(b.vertices);
+			Reference.reachabilityFence(b.indices);
+			glVertexAttribPointer(0, 3, GL_SHORT, false, b.stride, 0);
+			glEnableVertexAttribArray(0);
+			glVertexAttribIPointer(3, 1, GL_UNSIGNED_SHORT, b.stride, 6);
+			glEnableVertexAttribArray(3);
+			glVertexAttribIPointer(1, 1, GL_INT, b.stride, 8);
+			glEnableVertexAttribArray(1);
+			glVertexAttribPointer(2, 2, GL_SHORT, false, b.stride, 12);
+			glEnableVertexAttribArray(2);
+			if (b.stride > TerrainMesher.STRIDE)
+			{
+				glVertexAttribPointer(4, 1, GL_UNSIGNED_BYTE, false, b.stride, 16);
+				glEnableVertexAttribArray(4);
+				glVertexAttribPointer(7, 1, GL_UNSIGNED_BYTE, false, b.stride, 17);
+				glEnableVertexAttribArray(7);
+			}
+			glBindVertexArray(0);
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+		}
+		return m;
 	}
 
 	private static void freeMesh(Slot slot, int level)
 	{
 		Mesh m = slot.meshes[level];
 		slot.stale[level] = false;
+		free(m);
+		slot.meshes[level] = null;
+	}
+
+	/** Frees a mesh's buffers, and its see-through part's (GL thread); null for none. */
+	static void free(Mesh m)
+	{
 		if (m == null)
 			return;
 		if (m.vao != 0)
@@ -446,7 +526,11 @@ final class RegionLayer
 			glDeleteBuffers(m.vbo);
 		if (m.ebo != 0)
 			glDeleteBuffers(m.ebo);
-		slot.meshes[level] = null;
+		// the names may be given out again: a mesh let go draws nothing
+		m.vao = m.vbo = m.ebo = 0;
+		m.count = 0;
+		free(m.translucent);
+		free(m.biased);
 	}
 
 	/** Frees every mesh (GL thread); queued builds are dropped when they finish. */

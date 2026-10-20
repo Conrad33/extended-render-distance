@@ -43,6 +43,8 @@ public class CallbacksWrapper
 	private final FarRenderer far;
 	private Wrapper wrapper;
 	private boolean drewThisFrame;
+	/** The camera this frame's scene is drawn from (x, y, z, pitch, yaw), once its scene draw has begun. */
+	private float[] camera;
 	private long frame, lastCalled;
 
 	@Inject
@@ -99,10 +101,23 @@ public class CallbacksWrapper
 	{
 		if (drewThisFrame || scene == null || scene.getWorldViewId() != WorldView.TOPLEVEL)
 			return;
+		camera = new float[]{x, y, z, pitch, yaw};
+		far.fogOff();
+	}
+
+	/**
+	 * Draws the far world once the game's solid scene is drawn (before anything see-through): by then it's known
+	 * which zones the game drew this frame, so the far world fills in exactly the rest, and it's drawn behind what's
+	 * there already.
+	 */
+	private void afterOpaquePass(Scene scene)
+	{
+		if (drewThisFrame || camera == null || scene == null || scene.getWorldViewId() != WorldView.TOPLEVEL)
+			return;
 		drewThisFrame = true;
 		try
 		{
-			far.draw(x, y, z, pitch, yaw);
+			far.draw(camera[0], camera[1], camera[2], camera[3], camera[4]);
 		}
 		catch (RuntimeException e)
 		{
@@ -126,6 +141,7 @@ public class CallbacksWrapper
 			target.draw(overlayColor);
 			lastCalled = frame;
 			drewThisFrame = false;
+			camera = null;
 			far.endFrame();
 		}
 
@@ -243,6 +259,8 @@ public class CallbacksWrapper
 		public void drawPass(Projection projection, Scene scene, int pass)
 		{
 			target.drawPass(projection, scene, pass);
+			if (pass == DrawCallbacks.PASS_OPAQUE)
+				afterOpaquePass(scene);
 		}
 
 		@Override

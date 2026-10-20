@@ -71,6 +71,16 @@ public class ObjectLoader
 
 	private void processOp(int opcode, ObjectDefinition def, InputStream is)
 	{
+		// as the client: a second model list is the low detail one, skipped (the first is the full models)
+		if (opcode == 1 || opcode == 5 || opcode == 6 || opcode == 7)
+		{
+			if (def.getObjectModels() != null)
+			{
+				int length = is.readUnsignedByte();
+				is.skip(length * (opcode == 1 ? 3 : opcode == 5 ? 2 : opcode == 6 ? 5 : 4));
+				return;
+			}
+		}
 		if (opcode == 1)
 		{
 			int length = is.readUnsignedByte();

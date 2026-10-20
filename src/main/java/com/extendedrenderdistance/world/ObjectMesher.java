@@ -1,6 +1,8 @@
 package com.extendedrenderdistance.world;
 
+import com.extendedrenderdistance.cache.definitions.ModelDefinition;
 import com.extendedrenderdistance.cache.definitions.ObjectDefinition;
+import com.extendedrenderdistance.cache.models.VertexNormal;
 
 /**
  * Builds one map square's scenery (every placement on every plane) into a single mesh, placed the way the client
@@ -58,21 +60,403 @@ public final class ObjectMesher
 		}
 	}
 
+	/**
+	 * An object drawn playing its animation, rather than built into its square's mesh: its model (a form, model type
+	 * and orientation), where it stands relative to its square's south-west corner (local units, y down), turned by
+	 * {@code yaw}, the centre of its tile (for whether the game draws it itself), and how far into its animation it
+	 * starts (client cycles).
+	 */
+	public static final class Animated
+	{
+		public final long model;
+		public final ObjectAnimation animation;
+		public final float x, y, z, yaw, tileX, tileZ;
+		public final int phase;
+
+		Animated(long model, ObjectAnimation animation, float x, float y, float z, float yaw, float tileX, float tileZ,
+			int phase)
+		{
+			this.model = model;
+			this.animation = animation;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+			this.yaw = yaw;
+			this.tileX = tileX;
+			this.tileZ = tileZ;
+			this.phase = phase;
+		}
+	}
+
 	private final WorldCache cache;
 	private final ObjectModels models;
 	private final int[] textureColours;
+	/** Animated objects are left out of the squares' meshes, to be drawn playing ({@link Animated}). */
+	private final boolean animate;
+	/**
+	 * Animated models' frames built with the squares they're in, so a square is never drawn without them, until
+	 * they're taken to be drawn ({@link #takeFrames}).
+	 */
+	private final java.util.concurrent.ConcurrentHashMap<Long, TerrainMesher.Built[]> ready =
+		new java.util.concurrent.ConcurrentHashMap<>();
+	/** Models whose frames have been taken, so the squares built after don't build them again. */
+	private final java.util.Set<Long> taken = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
 	public ObjectMesher(WorldCache cache, int[] textureColours)
+	{
+		this(cache, textureColours, false);
+	}
+
+	/** The game's low detail mode: most ground decorations left out, as the game leaves them out. */
+	private final boolean lowDetail;
+
+	public ObjectMesher(WorldCache cache, int[] textureColours, boolean animate)
+	{
+		this(cache, textureColours, animate, false);
+	}
+
+	public ObjectMesher(WorldCache cache, int[] textureColours, boolean animate, boolean lowDetail)
 	{
 		this.cache = cache;
 		this.models = new ObjectModels(cache, textureColours);
 		this.textureColours = textureColours;
+		this.animate = animate;
+		this.lowDetail = lowDetail;
+	}
+
+	/**
+	 * Whether the game shows a ground decoration in low detail mode: only those that can be used, block the way, or
+	 * cover the ground (measured against the game).
+	 */
+	private static boolean shownInLowDetail(ObjectDefinition d)
+	{
+		return d.getWallOrDoor() != 0 || d.getInteractType() == 1 || d.isObstructsGround();
+	}
+
+	/**
+	 * An animated model's frames built ahead (with a square it's in), handed over once: null if there are none
+	 * (build them with {@link #frames}).
+	 */
+	public TerrainMesher.Built[] takeFrames(long model)
+	{
+		TerrainMesher.Built[] out = ready.remove(model);
+		if (out != null)
+			taken.add(model);
+		return out;
+	}
+
+	/** The models whose frames have been taken. */
+	public java.util.List<Long> takenModels()
+	{
+		return new java.util.ArrayList<>(taken);
+	}
+
+	/** Lets a model's frames be built ahead again (its frames were let go). */
+	public void forget(long model)
+	{
+		taken.remove(model);
+	}
+
+	/**
+	 * Every frame of an animated object's model ({@link Animated#model}), each relative to where it stands
+	 * (unanchored: the anchor is given where it's drawn); null where a frame has nothing to draw.
+	 */
+	public TerrainMesher.Built[] frames(long model)
+	{
+		ObjectDefinition d = cache.object((int) (model >>> 16));
+		int type = (int) (model >> 8 & 0xff), orientation = (int) (model & 0xff);
+		ObjectAnimation anim = d == null ? null : cache.animation(d.getAnimationID());
+		if (anim == null)
+			return new TerrainMesher.Built[0];
+		TerrainMesher.Built[] out = new TerrainMesher.Built[anim.frameCount()];
+		for (int k = 0; k < out.length; k++)
+		{
+			ObjectModels.Lit m = models.get(d, type, orientation, k);
+			if (m == null)
+				continue;
+			VertexSink sink = new VertexSink(m.faces * 3), glass = new VertexSink(64, true);
+			int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+			for (int v = 0; v < m.faces * 3; v++)
+			{
+				float px = m.corners[v * 3], py = m.corners[v * 3 + 1], pz = m.corners[v * 3 + 2];
+				int colour = stamp(m.colours[v], -1);
+				int texture = m.textures == null ? 0 : m.textures[v];
+				float u = texture == 0 ? 0 : m.uvs[v * 2], tv = texture == 0 ? 0 : m.uvs[v * 2 + 1];
+				int alpha = m.colours[v] >>> 24;
+				if (alpha > 0)
+					glass.put(px, py, pz, colour, u, tv, texture, alpha);
+				else
+					sink.put(px, py, pz, colour, u, tv, texture);
+				min = Math.min(min, (int) py);
+				max = Math.max(max, (int) py);
+			}
+			out[k] = sink.build(null, 0, min, max);
+			if (glass.count > 0)
+				out[k].translucent = glass.build(null, 0, min, max);
+		}
+		return out;
+	}
+
+	/**
+	 * A placed object whose model the client lights as one with its neighbours' (walls, roofs and the like whose
+	 * definition says so): where their vertices meet, their normals are added together, so the light runs on
+	 * smoothly from one to the next, and faces wholly against a neighbour on the same floor are hidden.
+	 */
+	private static final class Merging
+	{
+		final ObjectDefinition def;
+		/** The square's placement (and part of it: a corner wall has two), or -1 for a neighbouring square's. */
+		final int loc, part;
+		/** World tile, plane and footprint. */
+		final int x, y, plane, sx, sy;
+		/** Where its model stands: the footprint's middle, and its tile's height (as the client offsets them). */
+		final int cx, cy, cz;
+		final ModelDefinition model;
+		/** Its normals before any merging: what it gives its neighbours (its own are replaced as it's merged). */
+		final VertexNormal[] normals;
+		final int minX, maxX, minY, maxY, minZ, maxZ;
+
+		Merging(ObjectDefinition def, int loc, int part, int x, int y, int plane, int sx, int sy, int cy,
+			ModelDefinition model)
+		{
+			this.def = def;
+			this.loc = loc;
+			this.part = part;
+			this.x = x;
+			this.y = y;
+			this.plane = plane;
+			this.sx = sx;
+			this.sy = sy;
+			this.cx = x * 128 + sx * 64;
+			this.cz = y * 128 + sy * 64;
+			this.cy = cy;
+			this.model = model;
+			this.normals = model.vertexNormals.clone();
+			int x0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y0 = x0, y1 = x1, z0 = x0, z1 = x1;
+			for (int v = 0; v < model.vertexCount; v++)
+			{
+				x0 = Math.min(x0, model.vertexX[v]);
+				x1 = Math.max(x1, model.vertexX[v]);
+				y0 = Math.min(y0, model.vertexY[v]);
+				y1 = Math.max(y1, model.vertexY[v]);
+				z0 = Math.min(z0, model.vertexZ[v]);
+				z1 = Math.max(z1, model.vertexZ[v]);
+			}
+			minX = x0;
+			maxX = x1;
+			minY = y0;
+			maxY = y1;
+			minZ = z0;
+			maxZ = z1;
+		}
+	}
+
+	/** The placement's model parts (model type, orientation) whose normals the client merges; null for none. */
+	private static int[][] mergedParts(ObjectDefinition d, int type, int rot)
+	{
+		if (d == null || !d.isMergeNormals() || d.getContouredGround() >= 0 || d.getAnimationID() >= 0)
+			return null;
+		if (type == 2)
+			return new int[][]{{2, 4 + rot}, {2, rot + 1 & 3}};
+		if (type <= 3 || type == 9 || type == 10 || type >= 12 && type <= 21)
+			return new int[][]{{type, rot}};
+		return null;
+	}
+
+	/**
+	 * The square's placements to be merged ({@code own}) and those of its neighbours' within a tile of it, as
+	 * region and placement index pairs.
+	 */
+	private java.util.List<Object[]> mergeable(WorldTerrain.Region r)
+	{
+		java.util.List<Object[]> out = new java.util.ArrayList<>();
+		WorldTerrain world = cache.terrain;
+		for (int dx = -1; dx <= 1; dx++)
+		{
+			for (int dy = -1; dy <= 1; dy++)
+			{
+				WorldTerrain.Region g = dx == 0 && dy == 0 ? r : world.region(r.rx + dx, r.ry + dy);
+				if (g == null)
+					continue;
+				for (int i = 0; i < g.locCount(); i++)
+				{
+					int wx = g.baseX() + g.locX(i), wy = g.baseY() + g.locY(i);
+					// neighbours' placements up to a tile in (a big one's footprint can reach further: near enough)
+					if (g != r && (wx < r.baseX() - 4 || wx > r.baseX() + 64 || wy < r.baseY() - 4 || wy > r.baseY() + 64))
+						continue;
+					if (mergedParts(resolve(cache.object(g.locId(i))), g.locType(i), g.locOrientation(i)) != null)
+						out.add(new Object[]{g, i});
+				}
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * The square's merged placements lit, by placement and part ({@code loc * 2 + part}; null for one with nothing
+	 * left to draw), as the client lights them: each one's normals added to by every neighbour's (in a tile of it,
+	 * a floor up or down) at the vertices they share, and faces wholly shared with a neighbour on the same floor
+	 * hidden.
+	 */
+	private java.util.Map<Integer, ObjectModels.Lit> merged(WorldTerrain.Region r, java.util.List<Object[]> locs)
+	{
+		java.util.Map<Integer, ObjectModels.Lit> out = new java.util.HashMap<>();
+		if (locs.isEmpty())
+			return out;
+		WorldTerrain world = cache.terrain;
+		java.util.List<Merging> all = new java.util.ArrayList<>();
+		for (Object[] l : locs)
+		{
+			WorldTerrain.Region g = (WorldTerrain.Region) l[0];
+			int i = (int) l[1];
+			ObjectDefinition d = resolve(cache.object(g.locId(i)));
+			int type = g.locType(i), rot = g.locOrientation(i), plane = g.locPlane(i);
+			int[][] parts = mergedParts(d, type, rot);
+			int sx = 1, sy = 1;
+			if (type == 10 || type >= 12)
+			{
+				sx = Math.max(1, d.getSizeX());
+				sy = Math.max(1, d.getSizeY());
+				if ((rot & 1) == 1)
+				{
+					int t = sx;
+					sx = sy;
+					sy = t;
+				}
+			}
+			int wx = g.baseX() + g.locX(i), wy = g.baseY() + g.locY(i);
+			// as the client: its first tile's height
+			int cy = (world.height(wx, wy, plane, g) + world.height(wx + 1, wy, plane, g)
+				+ world.height(wx, wy + 1, plane, g) + world.height(wx + 1, wy + 1, plane, g)) / 4;
+			for (int p = 0; p < parts.length; p++)
+			{
+				ModelDefinition m = models.shaped(d, parts[p][0], parts[p][1]);
+				if (m == null && type == 9)
+					m = models.shaped(d, 10, parts[p][1]);
+				if (m != null)
+					all.add(new Merging(d, g == r ? i : -1, p, wx, wy, plane, sx, sy, cy, m));
+			}
+		}
+
+		for (Merging a : all)
+		{
+			if (a.loc < 0)
+				continue;
+			int n = a.model.vertexCount;
+			int[][] add = new int[n][];
+			boolean[] hidden = null;
+			for (Merging b : all)
+			{
+				if (b == a || Math.abs(a.plane - b.plane) > 1)
+					continue;
+				if (b.x > a.x + a.sx || b.x + b.sx - 1 < a.x - 1 || b.y > a.y + a.sy || b.y + b.sy - 1 < a.y - 1)
+					continue;
+				boolean pair = b.loc == a.loc;
+				boolean samePlane = a.plane == b.plane;
+				// on its own floor, not what stands on its own footprint (but a corner wall's two sides)
+				if (samePlane && !pair && b.x >= a.x && b.x < a.x + a.sx && b.y >= a.y && b.y < a.y + a.sy)
+					continue;
+				boolean[] marked = merge(a, b, add);
+				if (marked != null && samePlane && !pair)
+				{
+					for (int f = 0; f < a.model.faceCount; f++)
+					{
+						if (marked[a.model.faceIndices1[f]] && marked[a.model.faceIndices2[f]] && marked[a.model.faceIndices3[f]])
+						{
+							if (hidden == null)
+								hidden = new boolean[a.model.faceCount];
+							hidden[f] = true;
+						}
+					}
+				}
+			}
+			ModelDefinition m = a.model;
+			for (int v = 0; v < n; v++)
+			{
+				if (add[v] == null)
+					continue;
+				VertexNormal o = m.vertexNormals[v], s = new VertexNormal();
+				s.x = o.x + add[v][0];
+				s.y = o.y + add[v][1];
+				s.z = o.z + add[v][2];
+				s.magnitude = o.magnitude + add[v][3];
+				m.vertexNormals[v] = s;
+			}
+			if (hidden != null)
+			{
+				if (m.faceRenderTypes == null)
+					m.faceRenderTypes = new byte[m.faceCount];
+				for (int f = 0; f < m.faceCount; f++)
+				{
+					if (hidden[f])
+						m.faceRenderTypes[f] = 2;
+				}
+			}
+			ObjectModels.Lit lit = models.lit(m, a.def);
+			out.put(a.loc * 2 + a.part, lit);
+		}
+		return out;
+	}
+
+	/**
+	 * Adds to {@code add} (per vertex of a: x, y, z, magnitude; null to add nothing) the normals of b's vertices
+	 * that sit where a's do. Returns which of a's vertices met one, when at least 3 did (else null).
+	 */
+	private static boolean[] merge(Merging a, Merging b, int[][] add)
+	{
+		int dx = b.cx - a.cx, dy = b.cy - a.cy, dz = b.cz - a.cz;
+		ModelDefinition ma = a.model, mb = b.model;
+		boolean[] marked = null;
+		int count = 0;
+		for (int i = 0; i < ma.vertexCount; i++)
+		{
+			VertexNormal na = a.normals[i];
+			if (na == null || na.magnitude == 0)
+				continue;
+			int x = ma.vertexX[i] - dx, y = ma.vertexY[i] - dy, z = ma.vertexZ[i] - dz;
+			if (x < b.minX || x > b.maxX || y < b.minY || y > b.maxY || z < b.minZ || z > b.maxZ)
+				continue;
+			for (int j = 0; j < mb.vertexCount; j++)
+			{
+				VertexNormal nb = b.normals[j];
+				if (mb.vertexX[j] != x || mb.vertexY[j] != y || mb.vertexZ[j] != z || nb == null || nb.magnitude == 0)
+					continue;
+				if (add != null)
+				{
+					if (add[i] == null)
+						add[i] = new int[4];
+					add[i][0] += nb.x;
+					add[i][1] += nb.y;
+					add[i][2] += nb.z;
+					add[i][3] += nb.magnitude;
+				}
+				if (marked == null)
+					marked = new boolean[ma.vertexCount];
+				marked[i] = true;
+				count++;
+			}
+		}
+		return count >= 3 ? marked : null;
 	}
 
 	public TerrainMesher.Built build(WorldTerrain.Region r, Detail detail, Reach reach)
 	{
 		// read the square's models ahead in a few batches, rather than one at a time as they're met
 		java.util.Set<Integer> needed = new java.util.HashSet<>();
+		// and those of the placements lit with their neighbours', and those neighbours'
+		java.util.List<Object[]> mergeable = mergeable(r);
+		for (Object[] l : mergeable)
+		{
+			WorldTerrain.Region g = (WorldTerrain.Region) l[0];
+			int i = (int) l[1];
+			ObjectDefinition d = resolve(cache.object(g.locId(i)));
+			for (int[] part : mergedParts(d, g.locType(i), g.locOrientation(i)))
+			{
+				ObjectModels.modelsOf(d, part[0], needed);
+				if (g.locType(i) == 9)
+					ObjectModels.modelsOf(d, 10, needed);
+			}
+		}
 		for (int i = 0; i < r.locCount(); i++)
 		{
 			ObjectDefinition d = resolve(cache.object(r.locId(i)));
@@ -98,7 +482,7 @@ public final class ObjectMesher
 		try
 		{
 			cache.prefetchModels(needed);
-			return buildPrefetched(r, detail, reach);
+			return buildPrefetched(r, detail, reach, merged(r, mergeable));
 		}
 		catch (InterruptedException e)
 		{
@@ -111,10 +495,13 @@ public final class ObjectMesher
 		}
 	}
 
-	private TerrainMesher.Built buildPrefetched(WorldTerrain.Region r, Detail detail, Reach reach)
+	private TerrainMesher.Built buildPrefetched(WorldTerrain.Region r, Detail detail, Reach reach,
+		java.util.Map<Integer, ObjectModels.Lit> merged)
 	{
 		WorldTerrain world = cache.terrain;
 		VertexSink sink = new VertexSink(1 << 14);
+		VertexSink glass = new VertexSink(64, true), biasedSink = new VertexSink(64, true);
+		java.util.List<Animated> animated = null;
 		boolean landmarks = detail.landmarksOnly;
 		java.util.HashSet<Long> seen = detail.cell > 0 ? new java.util.HashSet<>() : null;
 		// one grid for the whole square, fine enough for the biggest object in it
@@ -133,6 +520,8 @@ public final class ObjectMesher
 			boolean roof = type >= 12 && type <= 21;
 			boolean wall = type <= 3 || type == 9;
 			if (!detail.decorations && (type >= 4 && type <= 8 || type == 22))
+				continue;
+			if (lowDetail && type == 22 && !shownInLowDetail(d))
 				continue;
 
 			// the model type(s) and orientation(s) the client asks for, and how the object is placed
@@ -170,15 +559,30 @@ public final class ObjectMesher
 			int wx = r.baseX() + x, wy = r.baseY() + y;
 			int anchor = x << 6 | y;
 			float cx = (x + sx / 2f) * 128, cz = (y + sy / 2f) * 128;
-			float cy = (world.height(wx, wy, plane, r) + world.height(wx + sx, wy, plane, r)
-				+ world.height(wx, wy + sy, plane, r) + world.height(wx + sx, wy + sy, plane, r)) / 4f;
-			boolean contour = d.getContouredGround() >= 0;
+			// as the client: the height of the middle of its footprint (the tile there, or the corner a footprint
+			// even across has there)
+			int hx0 = wx + (sx >> 1), hx1 = wx + (sx + 1 >> 1), hy0 = wy + (sy >> 1), hy1 = wy + (sy + 1 >> 1);
+			int cy = world.height(hx0, hy0, plane, r) + world.height(hx1, hy0, plane, r) + world.height(hx0, hy1, plane, r)
+				+ world.height(hx1, hy1, plane, r) >> 2;
+			int contourMode = d.getContouredGround();
+			boolean contour = contourMode >= 0;
+			// played where it's drawn, unless it bends to the ground (then it's built still, as its first frame)
+			ObjectAnimation anim = animate && !contour ? cache.animation(d.getAnimationID()) : null;
+			if (anim != null && anim.frameCount() < 2)
+				anim = null;
 
-			for (int[] part : parts)
+			for (int p = 0; p < parts.length; p++)
 			{
-				ObjectModels.Lit m = models.get(d, part[0], part[1]);
-				if (m == null && type == 9)
+				int[] part = parts[p];
+				int modelType = part[0];
+				// lit with its neighbours, or on its own
+				boolean isMerged = merged.containsKey(i * 2 + p);
+				ObjectModels.Lit m = isMerged ? merged.get(i * 2 + p) : models.get(d, part[0], part[1]);
+				if (m == null && type == 9 && !isMerged)
+				{
+					modelType = 10;
 					m = models.get(d, 10, part[1]);
+				}
 				if (m == null)
 					continue;
 				// stands out from afar: part of a building, big, or reaching high above the ground (counting the floor
@@ -186,6 +590,24 @@ public final class ObjectMesher
 				if (landmarks && !roof && !wall && plane == 0 && sx * sy < 4
 					&& m.top + (world.height(wx, wy, 0, r) - cy) < LANDMARK_HEIGHT)
 					continue;
+				if (anim != null)
+				{
+					if (animated == null)
+						animated = new java.util.ArrayList<>();
+					// as the client: each starts somewhere in its animation, unless the object says they go together
+					int phase = d.isRandomizeAnimStart() ? 0
+						: Math.floorMod((wx * 31 + wy) * 0x9E3779B1 + plane * 0x85EBCA6B, anim.loopLength());
+					long model = (long) d.getId() << 16 | modelType << 8 | part[1];
+					animated.add(new Animated(model, anim, cx, cy, cz, (float) yaw, x * 128 + 64, y * 128 + 64, phase));
+					// its frames built now, so the square shows it as soon as it's drawn
+					// (built outside the map's lock: building reads models through the client thread, which takes them
+					// from the map)
+					if (!taken.contains(model) && !ready.containsKey(model))
+						ready.putIfAbsent(model, frames(model));
+					min = Math.min(min, (int) cy - m.top);
+					max = Math.max(max, (int) cy);
+					continue;
+				}
 				float sin = (float) Math.sin(yaw), cos = (float) Math.cos(yaw);
 				float[] c = m.corners;
 				for (int f = 0; f < m.faces; f++)
@@ -201,7 +623,21 @@ public final class ObjectMesher
 							mx = t;
 						}
 						float px = cx + mx, pz = cz + mz;
-						float py = my + (contour ? groundAt(world, r, plane, px, pz) : cy);
+						float py = my + cy;
+						if (contour)
+						{
+							// as the client: the whole model follows the ground under it, or (a model standing on it,
+							// like a tree) only its foot, less and less up to the part of its height it gives
+							int ground = groundAt(world, r, plane, Math.round(px), Math.round(pz));
+							if (contourMode == 0)
+								py = my + ground;
+							else if (m.top > 0)
+							{
+								int up = (int) (((long) -Math.round(my) << 16) / m.top);
+								if (up < contourMode)
+									py = my + cy + (float) ((long) (contourMode - up) * (ground - cy) / contourMode);
+							}
+						}
 						if (cell > 0)
 						{
 							px = Math.round(px / cell) * cell;
@@ -217,11 +653,16 @@ public final class ObjectMesher
 					for (int k = 0; k < 3; k++)
 					{
 						int colour = stamp(m.colours[f * 3 + k], anchor);
-						if (m.textures == null || m.textures[f * 3 + k] == 0)
-							sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour);
+						int texture = m.textures == null ? 0 : m.textures[f * 3 + k];
+						float u = texture == 0 ? 0 : m.uvs[f * 6 + k * 2], v = texture == 0 ? 0 : m.uvs[f * 6 + k * 2 + 1];
+						int alpha = m.colours[f * 3 + k] >>> 24;
+						int bias = m.biases == null ? 0 : m.biases[f] & 0xff;
+						if (alpha > 0)
+							glass.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour, u, v, texture, alpha, bias);
+						else if (bias != 0)
+							biasedSink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour, u, v, texture, 0, bias);
 						else
-							sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour, m.uvs[f * 6 + k * 2],
-								m.uvs[f * 6 + k * 2 + 1], m.textures[f * 3 + k]);
+							sink.put(tri[k * 3], tri[k * 3 + 1], tri[k * 3 + 2], colour, u, v, texture);
 						min = Math.min(min, (int) tri[k * 3 + 1]);
 						max = Math.max(max, (int) tri[k * 3 + 1]);
 					}
@@ -238,9 +679,15 @@ public final class ObjectMesher
 			min = Math.min(min, top);
 			max = Math.max(max, top);
 		}
-		if (sink.count == 0)
+		if (min > max)
 			min = max = 0;
-		return sink.build(r, 0, min, max);
+		TerrainMesher.Built built = sink.build(r, 0, min, max);
+		if (glass.count > 0)
+			built.translucent = glass.build(r, 0, min, max);
+		if (biasedSink.count > 0)
+			built.biased = biasedSink.build(r, 0, min, max);
+		built.animated = animated;
+		return built;
 	}
 
 	/**
@@ -269,54 +716,80 @@ public final class ObjectMesher
 			cl[k] = TerrainMesher.light(dx, dz, 1);
 		}
 		float x0 = (wx - r.baseX()) * 128f, z0 = (wy - r.baseY()) * 128f;
-		boolean[] mask = over == WorldTerrain.VOID && !hole ? null
-			: path == 0 ? null : TileShapes.mask(path, r.floorRotation(i));
-		for (int cell = 0; cell < (mask == null ? 1 : 16); cell++)
+		if (path != 0 && (over != WorldTerrain.VOID || hole))
 		{
-			int row = cell / 4, col = cell % 4;
-			boolean overlay = mask == null ? over != WorldTerrain.VOID || hole : mask[cell];
-			int colour = overlay ? (hole ? WorldTerrain.VOID : over) : under;
-			if (colour == WorldTerrain.VOID)
-				continue;
-			double u0 = mask == null ? 0 : col / 4.0, u1 = mask == null ? 1 : (col + 1) / 4.0;
-			double v0 = mask == null ? 0 : 1 - (row + 1) / 4.0, v1 = mask == null ? 1 : 1 - row / 4.0;
-			double[] us = {u0, u1, u1, u0}, vs = {v0, v0, v1, v1};
+			shapedFloor(sink, r, i, x0, z0, ch, cl, path, under, hole ? WorldTerrain.VOID : over, overCode, textured);
+			return (int) ch[0];
+		}
+		// a whole tile: its overlay (or nothing, for a hole), else its underlay
+		boolean overlay = over != WorldTerrain.VOID || hole;
+		int colour = overlay ? (hole ? WorldTerrain.VOID : over) : under;
+		if (colour != WorldTerrain.VOID)
+		{
+			float[] us = {0, 1, 1, 0}, vs = {0, 0, 1, 1};
 			float[] x = new float[4], y = new float[4], z = new float[4];
 			int[] c = new int[4];
-			float[] tu = new float[4], tv = new float[4];
 			int[] tex = overlay && textured ? new int[4] : null;
 			for (int k = 0; k < 4; k++)
 			{
-				x[k] = x0 + (float) (us[k] * 128);
-				z[k] = z0 + (float) (vs[k] * 128);
-				y[k] = (float) bilinear(ch, us[k], vs[k]);
-				double light = bilinear(cl, us[k], vs[k]);
-				c[k] = stamp(TerrainMesher.shade(colour, light), r.floorX(i) << 6 | r.floorY(i));
-				tu[k] = (float) us[k];
-				tv[k] = (float) vs[k];
+				x[k] = x0 + us[k] * 128;
+				z[k] = z0 + vs[k] * 128;
+				y[k] = ch[k];
+				c[k] = stamp(TerrainMesher.shade(colour, cl[k]), r.floorX(i) << 6 | r.floorY(i));
 				if (tex != null)
-					tex[k] = TerrainMesher.texture(overCode, light);
+					tex[k] = TerrainMesher.texture(overCode, cl[k]);
 			}
-			sink.quad(x, y, z, c, tu, tv, tex);
+			sink.quad(x, y, z, c, us, vs, tex);
 			// and the other side
 			sink.quad(new float[]{x[0], x[3], x[2], x[1]}, new float[]{y[0], y[3], y[2], y[1]},
 				new float[]{z[0], z[3], z[2], z[1]}, new int[]{c[0], c[3], c[2], c[1]},
-				new float[]{tu[0], tu[3], tu[2], tu[1]}, new float[]{tv[0], tv[3], tv[2], tv[1]},
+				new float[]{us[0], us[3], us[2], us[1]}, new float[]{vs[0], vs[3], vs[2], vs[1]},
 				tex == null ? null : new int[]{tex[0], tex[3], tex[2], tex[1]});
 		}
 		return (int) ch[0];
 	}
 
-	private static double bilinear(float[] c, double u, double v)
+	/**
+	 * A part-overlay floor tile, as the client builds it (its shape's triangles, as the ground's: see
+	 * {@link TileModels}), both sides.
+	 */
+	private void shapedFloor(VertexSink sink, WorldTerrain.Region r, int i, float x0, float z0, float[] ch, double[] cl,
+		int path, int under, int over, int overCode, boolean textured)
 	{
-		double south = c[0] + (c[1] - c[0]) * u, north = c[3] + (c[2] - c[3]) * u;
-		return south + (north - south) * v;
-	}
-
-	private static double bilinear(double[] c, double u, double v)
-	{
-		double south = c[0] + (c[1] - c[0]) * u, north = c[3] + (c[2] - c[3]) * u;
-		return south + (north - south) * v;
+		int shape = TileModels.shape(path), rotation = r.floorRotation(i);
+		int[] points = TileModels.points(shape, rotation), faces = TileModels.faces(shape, rotation);
+		int[] height = new int[4], underColour = new int[4], overColour = new int[4];
+		for (int k = 0; k < 4; k++)
+		{
+			height[k] = (int) ch[k];
+			underColour[k] = under == WorldTerrain.VOID ? 0 : TerrainMesher.shade(under, cl[k]);
+			overColour[k] = over == WorldTerrain.VOID ? 0 : TerrainMesher.shade(over, cl[k]);
+		}
+		int anchor = r.floorX(i) << 6 | r.floorY(i);
+		float[] x = new float[3], y = new float[3], z = new float[3], u = new float[3], v = new float[3];
+		int[] c = new int[3], t = new int[3];
+		for (int f = 0; f < faces.length; f += 4)
+		{
+			boolean overlay = faces[f] == 1;
+			if (overlay ? over == WorldTerrain.VOID : under == WorldTerrain.VOID)
+				continue;
+			for (int k = 0; k < 3; k++)
+			{
+				int code = points[faces[f + 1 + k]];
+				u[k] = TileModels.east(code);
+				v[k] = TileModels.north(code);
+				x[k] = x0 + u[k] * 128;
+				z[k] = z0 + v[k] * 128;
+				y[k] = TileModels.of(code, height);
+				c[k] = stamp(TileModels.of(code, overlay ? overColour : underColour), anchor);
+				t[k] = overlay && textured ? TerrainMesher.texture(overCode, TileModels.light(code, cl)) : 0;
+			}
+			for (int k = 0; k < 3; k++)
+				sink.put(x[k], y[k], z[k], c[k], u[k], v[k], t[k]);
+			// and the other side
+			for (int k = 2; k >= 0; k--)
+				sink.put(x[k], y[k], z[k], c[k], u[k], v[k], t[k]);
+		}
 	}
 
 	/**
@@ -401,15 +874,17 @@ public final class ObjectMesher
 		return null;
 	}
 
-	/** The plane's height at a point given relative to the square's south-west corner (bilinear). */
-	private static float groundAt(WorldTerrain world, WorldTerrain.Region r, int plane, float px, float pz)
+	/**
+	 * The plane's height at a point given relative to the square's south-west corner (local units), across the tile
+	 * there as the client works it out (in whole numbers).
+	 */
+	private static int groundAt(WorldTerrain world, WorldTerrain.Region r, int plane, int px, int pz)
 	{
-		float tx = px / 128f, tz = pz / 128f;
-		int ix = (int) Math.floor(tx), iz = (int) Math.floor(tz);
-		float fx = tx - ix, fz = tz - iz;
-		int wx = r.baseX() + ix, wy = r.baseY() + iz;
-		float south = world.height(wx, wy, plane, r) * (1 - fx) + world.height(wx + 1, wy, plane, r) * fx;
-		float north = world.height(wx, wy + 1, plane, r) * (1 - fx) + world.height(wx + 1, wy + 1, plane, r) * fx;
-		return south * (1 - fz) + north * fz;
+		int tx = Math.floorDiv(px, 128), tz = Math.floorDiv(pz, 128);
+		int fx = px & 127, fz = pz & 127;
+		int wx = r.baseX() + tx, wy = r.baseY() + tz;
+		int south = world.height(wx, wy, plane, r) * (128 - fx) + world.height(wx + 1, wy, plane, r) * fx >> 7;
+		int north = world.height(wx, wy + 1, plane, r) * (128 - fx) + fx * world.height(wx + 1, wy + 1, plane, r) >> 7;
+		return south * (128 - fz) + north * fz >> 7;
 	}
 }

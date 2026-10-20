@@ -5,9 +5,8 @@ import java.nio.ByteOrder;
 
 /**
  * Which of the loaded scene's 8 x 8 tile zones the game's renderer draws itself, as told by its
- * {@code drawZoneOpaque} calls: a zone counts as drawn if it was drawn in any of the last {@link #KEEP} frames (so
- * one turned briefly out of view doesn't flicker over to the far world). Forgotten when the scene moves. Client
- * thread.
+ * {@code drawZoneOpaque} calls this frame (the far world is drawn once the game's solid zones are). Forgotten when
+ * the scene moves. Client thread.
  */
 final class DrawnZones
 {
@@ -15,7 +14,8 @@ final class DrawnZones
 	static final int ZONES = 23, OFFSET = 5;
 	/** The mask's side, in zones (a power of two at least {@link #ZONES}). */
 	static final int MASK = 32;
-	private static final int KEEP = 30;
+	/** Frames a zone counts as drawn after it was: this frame's (the far world is drawn after the game's zones). */
+	private static final int KEEP = 0;
 
 	private final long[] lastDrawn = new long[ZONES * ZONES];
 	private long frame = 1;

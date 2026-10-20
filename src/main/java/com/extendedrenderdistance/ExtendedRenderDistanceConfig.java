@@ -71,10 +71,21 @@ public interface ExtendedRenderDistanceConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "animations",
+		name = "Animations",
+		description = "Plays animated scenery (windmills, flags, fires, etc) in the distance.",
+		position = 5
+	)
+	default boolean animations()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "performanceMode",
 		name = "Performance Mode (Recommended)",
 		description = "Improves performance by simplifying distant geometry.",
-		position = 5
+		position = 6
 	)
 	default boolean performanceMode()
 	{
